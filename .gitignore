@@ -1,0 +1,16 @@
+**/bin/
+**/obj/
+**/build/
+**/.gradle/
+**/local.properties
+**/.idea/
+*.user
+*.pfx
+*.p12
+*.keystore
+*.jks
+*.part
+*.db
+__pycache__/
+.local/
+artifacts/
