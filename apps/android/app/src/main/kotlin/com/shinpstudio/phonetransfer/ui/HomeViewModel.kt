@@ -47,12 +47,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancel() {
         operation?.cancel()
-        mutableState.value = state.value.copy(busy = false, comparisonCode = null,
+        mutableState.value = state.value.copy(comparisonCode = null,
             connectionLabel = "中止しました。PC側で承認済みの場合はPCの端末一覧から解除してください。")
     }
 
     private fun runOperation(block: suspend () -> Unit) {
-        if (operation?.isActive == true) return
+        if (operation?.isCompleted == false) return
         operation = viewModelScope.launch {
             mutableState.value = state.value.copy(busy = true)
             try { block() } catch (error: TimeoutCancellationException) {
@@ -60,7 +60,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                mutableState.value = state.value.copy(connectionLabel = "接続または保存に失敗しました。LANとQR期限を確認してください。再登録する場合はPC側の登録を解除してください。")
+                mutableState.value = state.value.copy(connectionLabel = "接続または保存に失敗しました。LANとQR期限を確認してください。" +
+                    "再登録する場合はPC側の登録を解除してください。")
             } finally {
                 mutableState.value = state.value.copy(busy = false, comparisonCode = null)
             }

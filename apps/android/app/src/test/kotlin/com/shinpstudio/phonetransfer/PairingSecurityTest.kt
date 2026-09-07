@@ -54,7 +54,7 @@ class PairingSecurityTest {
         assertTrue(verifier.verify(signed))
         verifier.update((transcript + "x").toByteArray())
         assertFalse(verifier.verify(signed))
-        assertEquals(6, PairingProof.comparisonCode(transcript).length)
+        assertEquals("167709", PairingProof.comparisonCode(transcript))
     }
 
     @Test

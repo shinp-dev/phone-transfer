@@ -1,3 +1,39 @@
+# 開発引き継ぎ — Android QRペアリング接続
+
+更新日: 2026-09-08 JST
+
+PR #1のWindows基盤に続き、PR #2 / `feature/android-pairing` でAndroid側の接続導線を実装しました。mainへのマージは行っていません。
+
+## 今回の追加
+
+- Android Keystoreの非エクスポートP-256鍵。client-auth EKU、digitalSignature、非CAを持つ自己署名証明書を標準署名APIで作成。秘密鍵は保存ファイルに含めません。
+- ZXingによるオフラインQR読取と内容貼付。登録署名と双方で一致する6桁の確認番号。
+- QRのSPKI固定・証明書期限とserver-auth用途を確認するOkHttp HTTPS。プロキシ、リダイレクト、平文への移行を禁止。
+- 署名付き承認状態取得、中止、120秒の待機上限、128 KiBの応答上限。
+- PC承認後にmTLS `/api/v1/info` のDevice IDとprotocol versionを確認してからAtomicFileへ保存。QRトークンは永続化しません。
+- 保存したPCへの接続確認とローカル削除。削除や中止はPC側の登録を解除しないため、再登録時はPC側の解除が必要です。
+
+## 実機受入手順
+
+1. Windowsトレイを起動し「スマホを登録」でQRを表示。両端末を同じLANに置き、Windowsのプライベートネットワークで58442/58443を許可。
+2. Androidで「PCのQRを読み取る」。カメラを許可してPCのQRを読む。
+3. 両画面の6桁が一致することを確認し、PC側で承認。Androidで接続完了とPC一覧への追加を確認。
+4. Androidを終了・再起動して「接続を確認」。続いてPC側で端末を解除し、Androidの接続確認が失敗することを確認。
+5. 未承認で中止、QR期限切れ、PC拒否、Wi-Fi切断、カメラ拒否を確認。PC承認後にスマホ側保存まで到達しなかった場合はPC側の登録を解除してやり直す。
+6. Android側の登録削除とPC側解除後に再登録。Keystore鍵の再利用を確認。
+
+Windows GUI、AndroidカメラとKeystore、実LANの相互接続はこの環境では確認していません。CI成功だけでPhase 2完了と判断しないでください。
+
+## 次の作業
+
+Android接続の実機受入後、ADR002に沿ってWindowsのDNS-SD広告とAndroid NsdManagerを実装。mDNSは未実装です。保存済みPCのIPが変わった場合は現時点では双方の登録を解除し、新しいQRで再登録します。mDNS導入時は広告を候補としてのみ扱い、保存済みDevice IDとSPKI pinを維持します。
+
+その後Phase 3の共有設定と安全なファイルI/Oへ進みます。ファイル・テキスト転送は未実装です。
+
+---
+
+以下はPR #1時点の記録です。上記の追加範囲を優先してください。
+
 # 開発引き継ぎ — Windowsペアリング基盤の区切り
 
 更新日: 2026-09-07 UTC / 2026-09-08 JST

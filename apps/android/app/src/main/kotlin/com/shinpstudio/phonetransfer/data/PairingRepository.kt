@@ -93,7 +93,9 @@ class PairingRepository(private val context: Context) {
             withTimeout(120_000) {
                 val route = "${invitation.endpoint}/pairing/v1/requests"
                 var status = json.decodeFromString<PairingStatus>(execute(client,
-                    Request.Builder().url(route).post(json.encodeToString(request).toRequestBody("application/json".toMediaType())).build(), 202))
+                    Request.Builder().url(route)
+                        .post(json.encodeToString(request).toRequestBody("application/json".toMediaType()))
+                        .build(), 202))
                 val requestId = status.requestId
                 check(UUID.fromString(requestId).toString() == requestId)
                 onCode(PairingProof.comparisonCode(transcript))
