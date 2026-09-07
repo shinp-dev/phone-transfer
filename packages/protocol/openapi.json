@@ -546,7 +546,11 @@
             }
           }
         ],
-        "security": []
+        "security": [
+          {
+            "pairingProof": []
+          }
+        ]
       }
     }
   },
@@ -554,6 +558,12 @@
     "securitySchemes": {
       "mutualTls": {
         "type": "mutualTLS"
+      },
+      "pairingProof": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Pairing-Proof",
+        "description": "Canonical base64 DER ECDSA P-256/SHA-256 signature over UTF-8 phone-transfer/pairing-status/v1\\n{requestId in lowercase D UUID format}, signed by the pending request certificate key. Status is read-only; the proof never authorizes approval or device registration."
       }
     },
     "schemas": {

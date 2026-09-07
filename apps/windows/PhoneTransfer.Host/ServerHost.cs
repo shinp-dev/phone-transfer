@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -23,6 +24,7 @@ public static class ServerHost
             options.Listen(address, port, listen => listen.UseHttps(https =>
             {
                 https.ServerCertificate = serverCertificate;
+                https.SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13;
                 https.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
                 https.ClientCertificateValidation = (certificate, _, _) => authorize(certificate);
             }));

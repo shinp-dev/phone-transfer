@@ -2,23 +2,23 @@
 
 Updated: 2026-09-07
 
-## Phase 1 — in progress
+## Phase 1 — complete
 
-Implemented: monorepo, layer boundaries, tray/Compose startup shells, OpenAPI wire schemas and deterministic DTO generation, CI definitions, domain path syntax/state/offset/permission rules, stream digest verifier, stable device identity adapter, restricted Kestrel host factory and `/api/v1/info`, unit and real-TLS tests, nine ADRs and threat model.
+Implemented: monorepo, layer boundaries, tray/Compose startup shells, OpenAPI wire schemas and deterministic DTO generation, CI definitions, domain path syntax/state/offset/permission rules, stream digest verifier, stable device identity adapter, restricted Kestrel host factory and `/api/v1/info`, unit and real-TLS tests, ADRs and threat model.
 
-Validation is in progress. No phase has been declared complete until build, test, lint/format and protocol checks have passed.
+All Phase 1 gates passed at `38983e90ea191faabacdcd12ab85f2d44f48127e`: Android build/unit tests/lint/Spotless, Windows build/46 tests/format, protocol validation/generated model checks and diff whitespace checks. [CI evidence](https://github.com/shinp-dev/phone-transfer/actions/runs/34145840930). Android upgrade notices remain informational as documented in ADR 011.
 
-## Phase 2 — cryptographic primitives in progress
+## Phase 2 — Windows admission adapters in progress
 
-Implemented as application components, not exposed endpoints: a single-active QR challenge store (256-bit randomness, monotonic 120-second expiry, single use, atomic callback, replacement/invalidation and redacted ToString), and bounded ECDSA P-256 certificate proof verification. Verification binds the display name, device UUID, QR token and certificate fingerprint. It rejects invalid validity/usage/curve/encoding and does not fetch certificate-chain resources.
+Implemented as application components: a single-active QR challenge store (256-bit randomness, monotonic 120-second expiry, single use, atomic callback, replacement/invalidation and redacted ToString), and bounded ECDSA P-256 certificate proof verification. Verification binds the display name, device UUID, QR token and certificate fingerprint. It rejects invalid validity/usage/curve/encoding and does not fetch certificate-chain resources.
 
-Fifteen added test cases cover token replay/expiry/concurrency/failure and proof substitution/malformed metadata. Validation is in progress; see the latest PR checks.
+The cryptographic primitives passed fifteen added test cases. New in this increment: local approval coordinator, signature-authorized status polling, isolated HTTPS pairing host with body/concurrency/rate limits, SQLite device registration and revocation, current-user non-exportable CNG certificate adapter. New integration tests cover real HTTPS submission → local approval → mTLS info → pooled-connection revocation, persistent state, policy expiry and malformed/oversized/rate-limited input. Validation of this increment is in progress.
 
 ## Remaining Phase 2–6
 
-No production discovery, QR renderer/scanner, complete pairing/approval service, OS-backed certificate lifecycle, persisted allowlist/revocation UI, share configuration, Windows handle-safe filesystem, transfer endpoints, SQLite records, upload/download/resume orchestration, Android SAF/foreground service/share intents, text/history UI or recovery scheduler exists yet. OpenAPI routes other than `/api/v1/info` are design contracts, not callable features.
+Remaining: production mDNS, QR renderer/scanner, tray approval/device UI and host composition, Android Keystore/pinned transport and saved pairing, share configuration, Windows handle-safe filesystem, transfer endpoints/records, upload/download/resume orchestration, Android SAF/foreground service/share intents, text/history UI and recovery scheduler. Host factories implement `/api/v1/info` and the two `/pairing/v1/requests` routes; remaining OpenAPI routes are design contracts.
 
-The development tray deliberately does not start a server. Do not expose the host factory to LAN until the production authorization adapter and certificate lifecycle are implemented. The callback is injected for integration testing, not a built-in trust policy.
+The development tray deliberately does not start a server. Host factories are exercised by integration tests; production tray composition must supply the durable authorization adapter and certificate store and must make local approval usable before enabling LAN pairing.
 
 ## Required physical-device acceptance
 
@@ -28,7 +28,7 @@ Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, ACTION_SEND/MULT
 
 ## Continuation order
 
-1. Finish all Phase 1 CI gates; do not confuse passing primitive tests with a working pairing flow.
-2. Compose OS-backed key/certificate adapters and durable device allowlist, then local approval and proof-authorized polling with bounded pending sessions.
-3. Add isolated pinned-HTTPS bootstrap listener, mDNS and QR UI, then verify real Android Keystore mTLS to Windows.
+1. Complete the new Windows adapter integration-test gates.
+2. Compose tray lifecycle, QR and local approval/device-revocation UI.
+3. Add Android Keystore/pinned HTTPS/QR and mDNS, then verify real Android-to-Windows pairing.
 4. Continue Phases 3–6 in the original order. No live transfer listener is enabled by the primitives added here.
