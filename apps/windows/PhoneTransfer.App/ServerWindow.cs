@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using PhoneTransfer.Domain;
@@ -93,6 +94,7 @@ internal sealed class ServerWindow : Form
         try
         {
             await StopAsync();
+            devices.DataSource = null;
             var selected = (networks.SelectedItem as LanAdapter)?.Address;
             var adapters = LanAdapters.Find();
             networks.DataSource = adapters.ToList();
@@ -113,7 +115,7 @@ internal sealed class ServerWindow : Form
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception exception) when (exception is IOException or DbException or CryptographicException or
-            SocketException or UnauthorizedAccessException or InvalidOperationException)
+            SocketException or NetworkInformationException or FormatException or UnauthorizedAccessException or InvalidOperationException)
         {
             status.Text = "起動できませんでした。LAN接続・PCの保存先・ほかの起動中アプリを確認してください。";
         }

@@ -45,9 +45,17 @@ class PairingInvitation private constructor(
             require(expires > now && expires <= now.plusSeconds(150)) { "PAIRING_QR_EXPIRED" }
             val bootstrap = lanEndpoint(qr.endpoint)
             val api = lanEndpoint(qr.apiEndpoint)
-            require(bootstrap.host == api.host && bootstrap.port != api.port) { "INVALID_PAIRING_QR" }
+            require(bootstrap.host == api.host && bootstrap.port != api.port) {
+                "INVALID_PAIRING_QR"
+            }
             return PairingInvitation(
-                qr.deviceId, qr.displayName, bootstrap, api, qr.serverSpkiSha256, qr.token, expires
+                qr.deviceId,
+                qr.displayName,
+                bootstrap,
+                api,
+                qr.serverSpkiSha256,
+                qr.token,
+                expires
             )
         }
 
