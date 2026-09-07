@@ -60,7 +60,7 @@ class PairingInvitation private constructor(
             )
         }
 
-        private fun lanEndpoint(value: String): URI {
+        fun lanEndpoint(value: String): URI {
             // Numeric hosts avoid DNS rebinding and accidental Internet/proxy destinations.
             require(value.matches(Regex("https://[0-9.]+:[0-9]{1,5}"))) { "INVALID_PAIRING_QR" }
             val uri = URI(value)

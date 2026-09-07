@@ -11,7 +11,7 @@ android {
         applicationId = "com.shinpstudio.phonetransfer"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
+        versionCode = 2
         versionName = "0.1.0"
     }
     buildFeatures {
@@ -35,6 +35,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.83")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }
