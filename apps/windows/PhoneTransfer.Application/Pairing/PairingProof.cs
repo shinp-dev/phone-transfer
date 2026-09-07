@@ -9,18 +9,18 @@ public sealed record VerifiedPairingIdentity(Guid DeviceId, string DisplayName, 
 
 public static class PairingProof
 {
-    public static VerifiedPairingIdentity? Verify(PairingRequest request, DateTimeOffset now)
+    public static VerifiedPairingIdentity? Verify(PairingRequest? request, DateTimeOffset now)
     {
-        if (!Guid.TryParseExact(request.DeviceId, "D", out var deviceId) || deviceId == Guid.Empty ||
-            request.DeviceId != deviceId.ToString("D") ||
-            string.IsNullOrWhiteSpace(request.DisplayName) || request.DisplayName.Length > 128 ||
-            request.DisplayName.Any(char.IsControl) || !request.DisplayName.IsNormalized() ||
-            request.Token is null || request.Token.Length != 43 ||
-            request.Token.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_')) ||
-            request.CertificateDer is null || request.CertificateDer.Length is < 1 or > 8192 ||
-            request.ProofSignature is null || request.ProofSignature.Length is < 1 or > 2048) return null;
         try
         {
+            if (request is null || !Guid.TryParseExact(request.DeviceId, "D", out var deviceId) || deviceId == Guid.Empty ||
+                request.DeviceId != deviceId.ToString("D") ||
+                string.IsNullOrWhiteSpace(request.DisplayName) || request.DisplayName.Length > 128 ||
+                request.DisplayName.Any(char.IsControl) || !request.DisplayName.IsNormalized() ||
+                request.Token is null || request.Token.Length != 43 ||
+                request.Token.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_')) ||
+                request.CertificateDer is null || request.CertificateDer.Length is < 1 or > 8192 ||
+                request.ProofSignature is null || request.ProofSignature.Length is < 1 or > 2048) return null;
             var der = Convert.FromBase64String(request.CertificateDer);
             var signature = Convert.FromBase64String(request.ProofSignature);
             if (Convert.ToBase64String(der) != request.CertificateDer ||

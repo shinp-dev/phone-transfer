@@ -24,8 +24,10 @@ public class PairingProofTests
         {
             new Oid(clientUsage ? "1.3.6.1.5.5.7.3.2" : "1.3.6.1.5.5.7.3.1")
         }, true));
-        using var certificate = builder.CreateSelfSigned(
-            notYetValid ? Now.AddDays(1) : Now.AddDays(-2), expired ? Now.AddDays(-1) : Now.AddDays(2));
+        // The invalid key-usage fixture must not attach an ECDSA private key on Windows.
+        using var certificate = builder.Create(builder.SubjectName, X509SignatureGenerator.CreateForECDsa(key),
+            notYetValid ? Now.AddDays(1) : Now.AddDays(-2), expired ? Now.AddDays(-1) : Now.AddDays(2),
+            RandomNumberGenerator.GetBytes(16));
         var der = certificate.RawData;
         var id = Guid.NewGuid().ToString("D");
         var token = new PairingChallengeStore(TimeProvider.System).Issue().Token;
@@ -76,6 +78,8 @@ public class PairingProofTests
     public void RejectsMalformedAndOversizedInputsWithoutThrowing()
     {
         var request = Request();
+        Assert.Null(PairingProof.Verify(null, Now));
+        Assert.Null(PairingProof.Verify(request with { DisplayName = "\uD800" }, Now));
         Assert.Null(PairingProof.Verify(request with { DeviceId = Guid.Empty.ToString("D") }, Now));
         Assert.Null(PairingProof.Verify(request with { DeviceId = "bad" }, Now));
         Assert.Null(PairingProof.Verify(request with { DisplayName = "phone\nadmin" }, Now));
