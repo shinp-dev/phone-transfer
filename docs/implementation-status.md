@@ -34,5 +34,5 @@ Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, ACTION_SEND/MULT
 
 1. Complete the Windows tray/runtime integration-test gates.
 2. Verify Windows tray interaction on a physical machine.
-3. Verify Android Keystore/pinned HTTPS/QR on real Android-to-Windows pairing, then add mDNS and verify DHCP rediscovery.
+3. Add mDNS and verify DHCP rediscovery, alongside physical Android Keystore/pinned HTTPS/QR acceptance.
 4. Continue Phases 3–6 in the original order.

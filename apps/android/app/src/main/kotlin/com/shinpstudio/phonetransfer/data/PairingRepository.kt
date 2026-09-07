@@ -111,10 +111,9 @@ class PairingRepository(private val context: Context) {
                 val route = "${invitation.endpoint}/pairing/v1/requests"
                 val encoded = json.encodeToString(request)
                 val body = encoded.toRequestBody("application/json".toMediaType())
-                var status = json.decodeFromString<PairingStatus>(execute(client,
-                    Request.Builder().url(route)
-                        .post(body)
-                        .build(), 202))
+                val submission = Request.Builder().url(route).post(body).build()
+                val submitted = execute(client, submission, 202)
+                var status = json.decodeFromString<PairingStatus>(submitted)
                 val requestId = status.requestId
                 check(UUID.fromString(requestId).toString() == requestId)
                 onCode(PairingProof.comparisonCode(transcript))
@@ -123,9 +122,10 @@ class PairingRepository(private val context: Context) {
                 )
                 while (status.status == "pending") {
                     delay(1500)
-                    status = json.decodeFromString<PairingStatus>(execute(client,
-                        Request.Builder().url("$route/$requestId")
-                            .header("X-Pairing-Proof", proof).build(), 200))
+                    val poll = Request.Builder().url("$route/$requestId")
+                        .header("X-Pairing-Proof", proof).build()
+                    val result = execute(client, poll, 200)
+                    status = json.decodeFromString<PairingStatus>(result)
                     check(status.requestId == requestId)
                 }
                 check(status.status == "approved") { "PAIRING_DENIED_OR_EXPIRED" }

@@ -26,7 +26,7 @@ Windows GUI、AndroidカメラとKeystore、実LANの相互接続はこの環境
 
 ## 次の作業
 
-Android接続の実機受入後、ADR002に沿ってWindowsのDNS-SD広告とAndroid NsdManagerを実装。mDNSは未実装です。保存済みPCのIPが変わった場合は現時点では双方の登録を解除し、新しいQRで再登録します。mDNS導入時は広告を候補としてのみ扱い、保存済みDevice IDとSPKI pinを維持します。
+次はADR002に沿ってWindowsのDNS-SD広告とAndroid NsdManagerを実装。mDNSは未実装です。保存済みPCのIPが変わった場合は現時点では双方の登録を解除し、新しいQRで再登録します。実機受入はPhase 2完了までに必要です。mDNS導入時は広告を候補としてのみ扱い、保存済みDevice IDとSPKI pinを維持します。
 
 その後Phase 3の共有設定と安全なファイルI/Oへ進みます。ファイル・テキスト転送は未実装です。
 
