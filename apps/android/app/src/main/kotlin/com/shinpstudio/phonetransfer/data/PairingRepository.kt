@@ -105,7 +105,8 @@ class PairingRepository(private val context: Context) {
         val request = PairingRequest(identity.deviceId, "Android", invitation.token,
             Base64.getEncoder().encodeToString(identity.certificate.encoded),
             PairingProof.sign(identity.key, transcript))
-        val client = PinnedTls.client(invitation.endpoint.toString(), invitation.serverSpkiSha256)
+        val bootstrap = invitation.endpoint.toString()
+        val client = PinnedTls.client(bootstrap, invitation.serverSpkiSha256)
         try {
             withTimeout(120_000) {
                 val route = "${invitation.endpoint}/pairing/v1/requests"

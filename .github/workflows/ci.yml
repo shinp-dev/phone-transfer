@@ -57,7 +57,6 @@ jobs:
           gradle -p apps/android spotlessApply
           result=$?
           git diff
-          python -c 'from pathlib import Path; [print(str(p), p.read_text()) for p in Path("apps/android/build").rglob("*PairingRepository*") if p.is_file()]'
           exit "$result"
       - name: Print Android lint report
         if: always()
