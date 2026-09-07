@@ -7,7 +7,10 @@ import org.junit.Test
 class ResumeOffsetTest {
     @Test
     fun supportsOffsetsBeyondTwoGigabytes() {
-        assertEquals(3_000_000_100L, ResumeOffset.next(4_000_000_000L, 3_000_000_000L, 3_000_000_000L, 100))
+        assertEquals(
+            3_000_000_100L,
+            ResumeOffset.next(4_000_000_000L, 3_000_000_000L, 3_000_000_000L, 100)
+        )
     }
 
     @Test
