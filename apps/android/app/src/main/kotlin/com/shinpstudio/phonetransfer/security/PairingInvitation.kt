@@ -30,7 +30,8 @@ class PairingInvitation private constructor(
             val id = UUID.fromString(qr.deviceId)
             require(id.toString() == qr.deviceId && id != UUID(0, 0)) { "INVALID_PAIRING_QR" }
             require(
-                qr.displayName.isNotBlank() && qr.displayName.length <= 128 &&
+                qr.displayName.isNotBlank() &&
+                    qr.displayName.length <= 128 &&
                     qr.displayName.none { Character.isISOControl(it) } &&
                     Normalizer.isNormalized(qr.displayName, Normalizer.Form.NFC)
             ) { "INVALID_PAIRING_QR" }
@@ -74,8 +75,10 @@ class PairingInvitation private constructor(
                 number
             }
             require(
-                bytes[0] == 10 || (bytes[0] == 172 && bytes[1] in 16..31) ||
-                    (bytes[0] == 192 && bytes[1] == 168) || (bytes[0] == 169 && bytes[1] == 254)
+                bytes[0] == 10 ||
+                    (bytes[0] == 172 && bytes[1] in 16..31) ||
+                    (bytes[0] == 192 && bytes[1] == 168) ||
+                    (bytes[0] == 169 && bytes[1] == 254)
             ) { "INVALID_PAIRING_QR" }
             return uri
         }
