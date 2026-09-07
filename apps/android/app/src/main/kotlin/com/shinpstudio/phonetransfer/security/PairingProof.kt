@@ -15,7 +15,9 @@ object PairingProof {
         "phone-transfer/pairing/v1\n$id\n$name\n$token\n${sha256(certificate)}"
 
     fun comparisonCode(transcript: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(transcript.toByteArray(Charsets.UTF_8))
+        val digest = MessageDigest.getInstance(
+            "SHA-256"
+        ).digest(transcript.toByteArray(Charsets.UTF_8))
         val number = ByteBuffer.wrap(digest).int.toLong() and 0xffffffffL
         return String.format(Locale.ROOT, "%06d", number % 1_000_000)
     }

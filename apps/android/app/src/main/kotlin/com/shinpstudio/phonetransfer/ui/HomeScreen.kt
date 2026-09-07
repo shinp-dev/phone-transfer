@@ -40,12 +40,18 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         Text(state.connectionLabel)
         state.comparisonCode?.let { Text(it, style = MaterialTheme.typography.displayMedium) }
         Button(enabled = !state.busy, onClick = {
-            scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                .setPrompt("PCの「スマホを登録」で表示したQRを読み取ってください")
-                .setBeepEnabled(false).setBarcodeImageEnabled(false))
+            scanner.launch(
+                ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                    .setPrompt("PCの「スマホを登録」で表示したQRを読み取ってください")
+                    .setBeepEnabled(false).setBarcodeImageEnabled(false)
+            )
         }) { Text("PCのQRを読み取る") }
-        OutlinedTextField(value = payload, onValueChange = { if (it.length <= 4096) payload = it },
-            enabled = !state.busy, label = { Text("QRの内容を貼り付け（カメラが使えない場合）") })
+        OutlinedTextField(
+            value = payload,
+            onValueChange = { if (it.length <= 4096) payload = it },
+            enabled = !state.busy,
+            label = { Text("QRの内容を貼り付け（カメラが使えない場合）") }
+        )
         Button(enabled = !state.busy && payload.isNotBlank(), onClick = {
             val input = payload
             payload = ""
@@ -55,7 +61,9 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         state.pcs.forEach { pc ->
             Text(pc.displayName)
             Button(enabled = !state.busy, onClick = { viewModel.connect(pc) }) { Text("接続を確認") }
-            TextButton(enabled = !state.busy, onClick = { viewModel.forget(pc) }) { Text("このスマホから登録を削除") }
+            TextButton(enabled = !state.busy, onClick = {
+                viewModel.forget(pc)
+            }) { Text("このスマホから登録を削除") }
         }
         Text("ファイル・テキスト転送は準備中です")
         Text("App ${BuildConfig.VERSION_NAME} / Build ${BuildConfig.VERSION_CODE} / Protocol 1")
