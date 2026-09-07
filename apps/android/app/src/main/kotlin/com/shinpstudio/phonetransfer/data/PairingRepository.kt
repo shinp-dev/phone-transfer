@@ -87,60 +87,72 @@ class PairingRepository(private val context: Context) {
                 "SERVER_IDENTITY_MISMATCH"
             }
             info
-        } finally { close(client) }
+        } finally {
+            close(client)
+        }
     }
 
-    suspend fun pair(
-        payload: String,
-        onCode: suspend (String) -> Unit
-    ): SavedPc = withContext(Dispatchers.IO) {
-        val invitation = PairingInvitation.parse(payload, Instant.now())
-        val pcs = readSaved()
-        check(pcs.none { it.deviceId == invitation.deviceId }) { "PC_ALREADY_SAVED" }
-        check(pcs.size < 100) { "PC_LIMIT" }
-        val identity = ClientIdentity.load(context)
-        val transcript = PairingProof.transcript(
-            identity.deviceId, "Android", invitation.token, identity.certificate.encoded
-        )
-        val request = PairingRequest(identity.deviceId, "Android", invitation.token,
-            Base64.getEncoder().encodeToString(identity.certificate.encoded),
-            PairingProof.sign(identity.key, transcript))
-        val bootstrap = invitation.endpoint.toString()
-        val client = PinnedTls.client(bootstrap, invitation.serverSpkiSha256)
-        try {
-            withTimeout(120_000) {
-                val route = "${invitation.endpoint}/pairing/v1/requests"
-                val encoded = json.encodeToString(request)
-                val body = encoded.toRequestBody("application/json".toMediaType())
-                val submission = Request.Builder().url(route).post(body).build()
-                val submitted = execute(client, submission, 202)
-                var status = json.decodeFromString<PairingStatus>(submitted)
-                val requestId = status.requestId
-                check(UUID.fromString(requestId).toString() == requestId)
-                onCode(PairingProof.comparisonCode(transcript))
-                val proof = PairingProof.sign(
-                    identity.key, "phone-transfer/pairing-status/v1\n$requestId"
-                )
-                while (status.status == "pending") {
-                    delay(1500)
-                    val poll = Request.Builder().url("$route/$requestId")
-                        .header("X-Pairing-Proof", proof).build()
-                    val result = execute(client, poll, 200)
-                    status = json.decodeFromString<PairingStatus>(result)
-                    check(status.requestId == requestId)
+    suspend fun pair(payload: String, onCode: suspend (String) -> Unit): SavedPc =
+        withContext(Dispatchers.IO) {
+            val invitation = PairingInvitation.parse(payload, Instant.now())
+            val pcs = readSaved()
+            check(pcs.none { it.deviceId == invitation.deviceId }) { "PC_ALREADY_SAVED" }
+            check(pcs.size < 100) { "PC_LIMIT" }
+            val identity = ClientIdentity.load(context)
+            val transcript = PairingProof.transcript(
+                identity.deviceId,
+                "Android",
+                invitation.token,
+                identity.certificate.encoded
+            )
+            val request = PairingRequest(
+                identity.deviceId,
+                "Android",
+                invitation.token,
+                Base64.getEncoder().encodeToString(identity.certificate.encoded),
+                PairingProof.sign(identity.key, transcript)
+            )
+            val bootstrap = invitation.endpoint.toString()
+            val client = PinnedTls.client(bootstrap, invitation.serverSpkiSha256)
+            try {
+                withTimeout(120_000) {
+                    val route = "${invitation.endpoint}/pairing/v1/requests"
+                    val encoded = json.encodeToString(request)
+                    val body = encoded.toRequestBody("application/json".toMediaType())
+                    val submission = Request.Builder().url(route).post(body).build()
+                    val submitted = execute(client, submission, 202)
+                    var status = json.decodeFromString<PairingStatus>(submitted)
+                    val requestId = status.requestId
+                    check(UUID.fromString(requestId).toString() == requestId)
+                    onCode(PairingProof.comparisonCode(transcript))
+                    val proof = PairingProof.sign(
+                        identity.key,
+                        "phone-transfer/pairing-status/v1\n$requestId"
+                    )
+                    while (status.status == "pending") {
+                        delay(1500)
+                        val poll = Request.Builder().url("$route/$requestId")
+                            .header("X-Pairing-Proof", proof).build()
+                        val result = execute(client, poll, 200)
+                        status = json.decodeFromString<PairingStatus>(result)
+                        check(status.requestId == requestId)
+                    }
+                    check(status.status == "approved") { "PAIRING_DENIED_OR_EXPIRED" }
+                    val pc = SavedPc(
+                        invitation.deviceId,
+                        invitation.displayName,
+                        invitation.apiEndpoint.toString(),
+                        invitation.serverSpkiSha256
+                    )
+                    connect(pc)
+                    ensureActive()
+                    writeSaved(pcs + pc)
+                    pc
                 }
-                check(status.status == "approved") { "PAIRING_DENIED_OR_EXPIRED" }
-                val pc = SavedPc(
-                    invitation.deviceId, invitation.displayName,
-                    invitation.apiEndpoint.toString(), invitation.serverSpkiSha256
-                )
-                connect(pc)
-                ensureActive()
-                writeSaved(pcs + pc)
-                pc
+            } finally {
+                close(client)
             }
-        } finally { close(client) }
-    }
+        }
 
     private fun close(client: OkHttpClient) {
         client.dispatcher.cancelAll()
@@ -148,32 +160,29 @@ class PairingRepository(private val context: Context) {
         client.dispatcher.executorService.shutdown()
     }
 
-    private suspend fun execute(
-        client: OkHttpClient,
-        request: Request,
-        expected: Int
-    ): String = suspendCancellableCoroutine { continuation ->
-        val call = client.newCall(request)
-        continuation.invokeOnCancellation { call.cancel() }
-        call.enqueue(object : Callback {
-            override fun onFailure(call: Call, error: IOException) {
-                if (continuation.isActive) {
-                    continuation.resumeWithException(IOException("CONNECTION_FAILED"))
-                }
-            }
-            override fun onResponse(call: Call, response: Response) {
-                try {
-                    val result = response.use {
-                        check(it.code == expected) { "HTTP_${it.code}" }
-                        val source = it.body?.source() ?: error("EMPTY_RESPONSE")
-                        check(!source.request(131_073)) { "RESPONSE_TOO_LARGE" }
-                        source.readUtf8()
+    private suspend fun execute(client: OkHttpClient, request: Request, expected: Int): String =
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, error: IOException) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(IOException("CONNECTION_FAILED"))
                     }
-                    if (continuation.isActive) continuation.resume(result)
-                } catch (error: Exception) {
-                    if (continuation.isActive) continuation.resumeWithException(error)
                 }
-            }
-        })
-    }
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        val result = response.use {
+                            check(it.code == expected) { "HTTP_${it.code}" }
+                            val source = it.body?.source() ?: error("EMPTY_RESPONSE")
+                            check(!source.request(131_073)) { "RESPONSE_TOO_LARGE" }
+                            source.readUtf8()
+                        }
+                        if (continuation.isActive) continuation.resume(result)
+                    } catch (error: Exception) {
+                        if (continuation.isActive) continuation.resumeWithException(error)
+                    }
+                }
+            })
+        }
 }

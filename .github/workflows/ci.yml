@@ -50,14 +50,6 @@ jobs:
           gradle-version: '8.13'
       - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - run: gradle -p apps/android spotlessCheck :protocol:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
-      - name: Formatting diagnostics
-        if: failure()
-        run: |
-          set +e
-          gradle -p apps/android spotlessApply
-          result=$?
-          git diff
-          exit "$result"
       - name: Print Android lint report
         if: always()
         run: |
