@@ -85,7 +85,7 @@ public class PairingChallengeTests
         var created = 0;
         var results = await Task.WhenAll(Enumerable.Range(0, 64).Select(_ => Task.Run(() =>
             store.TryConsume(challenge.Token, () => Interlocked.Increment(ref created)))));
-        Assert.Single(results.Where(success => success));
+        Assert.Single(results, success => success);
         Assert.Equal(1, created);
     }
 
