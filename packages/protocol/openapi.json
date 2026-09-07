@@ -905,6 +905,7 @@
           "deviceId",
           "displayName",
           "endpoint",
+          "apiEndpoint",
           "serverSpkiSha256",
           "token",
           "expiresAt"
@@ -942,6 +943,11 @@
           "expiresAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "apiEndpoint": {
+            "type": "string",
+            "format": "uri",
+            "description": "HTTPS mTLS API endpoint. endpoint is the separate HTTPS bootstrap listener."
           }
         }
       },

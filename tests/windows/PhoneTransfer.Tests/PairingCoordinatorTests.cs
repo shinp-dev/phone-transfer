@@ -116,6 +116,24 @@ public sealed class PairingCoordinatorTests : IDisposable
         Assert.Null(registry.Authorize(certificate));
     }
 
+    [Fact]
+    public void ClosingQrPreservesApprovalReceiptAndDeniesUnapprovedSession()
+    {
+        using var certificate = PairingTestCertificates.Create();
+        var registry = new SqliteDeviceRegistry(Database);
+        var pairing = new PairingCoordinator(registry, TimeProvider.System);
+        Guid Submit() => Guid.Parse(pairing.Submit(PairingTestCertificates.Request(certificate, pairing.IssueChallenge().Token)).RequestId);
+        var denied = Submit();
+        pairing.EndChallenge();
+        Assert.Equal("denied", pairing.GetStatus(denied, PairingTestCertificates.StatusProof(certificate, denied)).Status);
+        Assert.False(pairing.Approve(denied));
+        var approved = Submit();
+        Assert.True(pairing.Approve(approved));
+        pairing.EndChallenge();
+        Assert.Equal("approved", pairing.GetStatus(approved, PairingTestCertificates.StatusProof(certificate, approved)).Status);
+        Assert.NotNull(registry.Authorize(certificate));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);

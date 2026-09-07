@@ -4,20 +4,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly NotifyIcon icon;
     private readonly ContextMenuStrip menu = new();
+    private readonly ServerWindow window = new();
 
     public TrayApplicationContext()
     {
-        menu.Items.Add("状態", null, (_, _) => MessageBox.Show(
-            "開発中: ペアリング設定前のため、サーバーは停止しています。\nApp 0.1.0 / Build 1 / Protocol 1",
-            "Phone Transfer"));
-        menu.Items.Add("終了", null, (_, _) => ExitThread());
+        MainForm = window;
+        menu.Items.Add("開く", null, (_, _) => { window.Show(); window.Activate(); });
+        menu.Items.Add("終了", null, async (_, _) => await window.CloseApplicationAsync());
         icon = new NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = "Phone Transfer — 未設定",
+            Text = "Phone Transfer",
             ContextMenuStrip = menu,
             Visible = true
         };
+        icon.DoubleClick += (_, _) => { window.Show(); window.Activate(); };
+        window.Show();
     }
 
     protected override void Dispose(bool disposing)
@@ -27,6 +29,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             icon.Visible = false;
             icon.Dispose();
             menu.Dispose();
+            window.Dispose();
         }
         base.Dispose(disposing);
     }

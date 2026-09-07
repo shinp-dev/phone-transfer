@@ -42,6 +42,16 @@ public sealed class PairingCoordinator(IPairedDeviceRegistry devices, TimeProvid
         }
     }
 
+    public void EndChallenge()
+    {
+        lock (gate)
+        {
+            challenges.Invalidate();
+            // Preserve the signed status receipt while the phone observes local approval/denial.
+            if (pending is not null && CurrentStatus(pending) == "pending") pending.Status = "denied";
+        }
+    }
+
     public void ClosePairing()
     {
         lock (gate)

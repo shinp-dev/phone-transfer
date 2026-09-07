@@ -98,6 +98,7 @@ data class PairingQr(
     val serverSpkiSha256: String,
     val token: String,
     val expiresAt: String,
+    val apiEndpoint: String,
 )
 
 @Serializable

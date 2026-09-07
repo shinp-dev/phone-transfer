@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using PhoneTransfer.Api;
 using PhoneTransfer.Application.Pairing;
 using PhoneTransfer.Protocol;
@@ -19,6 +20,13 @@ public static class PairingHost
         IPAddress address, int port)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
+        builder.Logging.ClearProviders();
+        builder.Logging.AddJsonConsole(options =>
+        {
+            options.IncludeScopes = true;
+            options.TimestampFormat = "O";
+            options.UseUtcTimestamp = true;
+        });
         builder.WebHost.ConfigureKestrel(options =>
         {
             options.Limits.MaxRequestBodySize = 128 * 1024;

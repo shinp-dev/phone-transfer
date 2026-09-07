@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using PhoneTransfer.Api;
 using PhoneTransfer.Application;
 
@@ -18,6 +19,13 @@ public static class ServerHost
         Func<X509Certificate2, bool> authorize, IPAddress address, int port)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
+        builder.Logging.ClearProviders();
+        builder.Logging.AddJsonConsole(options =>
+        {
+            options.IncludeScopes = true;
+            options.TimestampFormat = "O";
+            options.UseUtcTimestamp = true;
+        });
         builder.WebHost.ConfigureKestrel(options =>
         {
             options.Limits.MaxRequestBodySize = 4 * 1024 * 1024;

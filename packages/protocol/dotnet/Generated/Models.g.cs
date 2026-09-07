@@ -74,7 +74,8 @@ public sealed record PairingQr(
     [property: JsonPropertyName("endpoint")] string Endpoint,
     [property: JsonPropertyName("serverSpkiSha256")] string ServerSpkiSha256,
     [property: JsonPropertyName("token")] string Token,
-    [property: JsonPropertyName("expiresAt")] string ExpiresAt);
+    [property: JsonPropertyName("expiresAt")] string ExpiresAt,
+    [property: JsonPropertyName("apiEndpoint")] string ApiEndpoint);
 
 public sealed record PairingRequest(
     [property: JsonPropertyName("deviceId")] string DeviceId,
