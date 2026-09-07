@@ -109,8 +109,8 @@ class PairingRepository(private val context: Context) {
         try {
             withTimeout(120_000) {
                 val route = "${invitation.endpoint}/pairing/v1/requests"
-                val body = json.encodeToString(request)
-                    .toRequestBody("application/json".toMediaType())
+                val encoded = json.encodeToString(request)
+                val body = encoded.toRequestBody("application/json".toMediaType())
                 var status = json.decodeFromString<PairingStatus>(execute(client,
                     Request.Builder().url(route)
                         .post(body)

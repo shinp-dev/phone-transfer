@@ -6,11 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.shinpstudio.phonetransfer.data.PairingRepository
 import com.shinpstudio.phonetransfer.data.SavedPc
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class HomeState(
     val connectionLabel: String = "PC未接続",
@@ -32,8 +34,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun pair(payload: String) = runOperation {
         mutableState.value = state.value.copy(connectionLabel = "登録要求を送信中")
         val pc = repository.pair(payload) { code ->
-            mutableState.value =
-                state.value.copy(comparisonCode = code, connectionLabel = "PCの番号を確認してPC側で承認してください")
+            withContext(Dispatchers.Main.immediate) {
+                mutableState.value = state.value.copy(
+                    comparisonCode = code,
+                    connectionLabel = "PCの番号を確認してPC側で承認してください"
+                )
+            }
         }
         mutableState.value =
             state.value.copy(

@@ -57,8 +57,15 @@ class PairingSecurityTest {
 
     @Test
     fun pinDoesNotBypassValidityOrServerUsage() {
+        val server = certificate()
+        server.verify(pair.public)
+        val client = certificate(server = false)
+        client.verify(pair.public)
+        assertEquals(-1, client.basicConstraints)
+        assertTrue(client.keyUsage[0])
+        assertTrue(client.extendedKeyUsage.contains("1.3.6.1.5.5.7.3.2"))
         val trust = PinnedTrustManager(PairingProof.sha256(pair.public.encoded))
-        trust.checkServerTrusted(arrayOf(certificate()), "EC")
+        trust.checkServerTrusted(arrayOf(server), "EC")
         for (bad in listOf(
             certificate(server = false),
             certificate(expired = true),

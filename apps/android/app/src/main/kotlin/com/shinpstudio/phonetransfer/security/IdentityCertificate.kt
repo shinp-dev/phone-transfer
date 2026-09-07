@@ -40,7 +40,11 @@ internal object IdentityCertificate {
         val extensions = ExtensionsGenerator().apply {
             addExtension(Extension.basicConstraints, true, BasicConstraints(ca))
             addExtension(Extension.keyUsage, true, KeyUsage(KeyUsage.digitalSignature))
-            val purpose = if (server) KeyPurposeId.id_kp_serverAuth else KeyPurposeId.id_kp_clientAuth
+            val purpose = if (server) {
+                KeyPurposeId.id_kp_serverAuth
+            } else {
+                KeyPurposeId.id_kp_clientAuth
+            }
             addExtension(Extension.extendedKeyUsage, true, ExtendedKeyUsage(purpose))
         }
         val body = V3TBSCertificateGenerator().apply {
