@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  
+  <ItemGroup>
+    <ProjectReference Include="../PhoneTransfer.Application/PhoneTransfer.Application.csproj" />
+    <ProjectReference Include="../../../packages/protocol/dotnet/PhoneTransfer.Protocol.csproj" />
+<FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="apps/windows/PhoneTransfer.Domain/PhoneTransfer.Domain.csproj" />
+  <Project Path="apps/windows/PhoneTransfer.Application/PhoneTransfer.Application.csproj" />
+  <Project Path="apps/windows/PhoneTransfer.Infrastructure/PhoneTransfer.Infrastructure.csproj" />
+  <Project Path="apps/windows/PhoneTransfer.Api/PhoneTransfer.Api.csproj" />
+  <Project Path="apps/windows/PhoneTransfer.Host/PhoneTransfer.Host.csproj" />
+  <Project Path="apps/windows/PhoneTransfer.App/PhoneTransfer.App.csproj" />
+  <Project Path="packages/protocol/dotnet/PhoneTransfer.Protocol.csproj" />
+  <Project Path="tests/windows/PhoneTransfer.Tests/PhoneTransfer.Tests.csproj" />
+</Solution>

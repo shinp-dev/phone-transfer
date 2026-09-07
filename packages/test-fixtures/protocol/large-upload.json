@@ -1,0 +1,11 @@
+{
+  "schema": "CreateTransfer",
+  "valid": true,
+  "value": {
+    "shareId": "c7b096ac-d27e-4b99-83c5-cbe91be8cd21",
+    "relativePath": "photos/a.jpg",
+    "totalSize": 4294967296,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "idempotencyKey": "514bf0f3-a0b7-4a97-bcea-245d9828f731"
+  }
+}
