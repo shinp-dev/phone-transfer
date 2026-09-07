@@ -2,6 +2,8 @@
 
 Updated: 2026-09-07
 
+See [development handoff](handoff.md) for the checkpoint scope and exact continuation order. This checkpoint may be merged to main before the MVP is complete.
+
 ## Phase 1 — complete
 
 Implemented: monorepo, layer boundaries, tray/Compose startup shells, OpenAPI wire schemas and deterministic DTO generation, CI definitions, domain path syntax/state/offset/permission rules, stream digest verifier, stable device identity adapter, restricted Kestrel host factory and `/api/v1/info`, unit and real-TLS tests, ADRs and threat model.
@@ -14,7 +16,7 @@ Implemented as application components: a single-active QR challenge store (256-b
 
 The cryptographic primitives passed fifteen added test cases. New in this increment: local approval coordinator, signature-authorized status polling, isolated HTTPS pairing host with body/concurrency/rate limits, SQLite device registration and revocation, current-user non-exportable CNG certificate adapter. New integration tests cover real HTTPS submission → local approval → mTLS info → pooled-connection revocation, persistent state, policy expiry and malformed/oversized/rate-limited input. These backend changes passed Windows, Android and protocol CI at `507862cd10767922aca57b8cff1d0a46ad742ac0`: [CI evidence](https://github.com/shinp-dev/phone-transfer/actions/runs/34146429559).
 
-The next increment composes the production Windows runtime into the tray: LAN adapter selection, QR rendering, explicit comparison-code approval, durable device listing/revocation, and bounded host shutdown. Closing the QR denies unapproved requests while preserving a completed status receipt until its original expiry. Added tests exercise that lifecycle and production CNG-backed TLS across a host restart. CI validation of this UI/runtime increment is pending. Android now has a separately tested QR validation boundary (strict version/identity/token/expiry, numeric private IPv4 HTTPS endpoints on the same host, no credentials/path/query or untrusted DNS). This component is not yet connected to a scanner or network transport.
+The next increment composes the production Windows runtime into the tray: LAN adapter selection, QR rendering, explicit comparison-code approval, durable device listing/revocation, and bounded host shutdown. Closing the QR denies unapproved requests while preserving a completed status receipt until its original expiry. Added tests exercise that lifecycle and production CNG-backed TLS across a host restart. Windows build, format and all 57 tests passed at `052056b` ([CI](https://github.com/shinp-dev/phone-transfer/actions/runs/34164986068)). Final Android and merge checks are recorded on [PR #1](https://github.com/shinp-dev/phone-transfer/pull/1). Android now has a separately tested QR validation boundary (strict version/identity/token/expiry, numeric private IPv4 HTTPS endpoints on the same host, no credentials/path/query or untrusted DNS). This component is not yet connected to a scanner or network transport.
 
 ## Remaining Phase 2–6
 
