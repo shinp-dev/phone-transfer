@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  
+  <ItemGroup>
+    <ProjectReference Include="../PhoneTransfer.Domain/PhoneTransfer.Domain.csproj" />
+    <ProjectReference Include="../../../packages/protocol/dotnet/PhoneTransfer.Protocol.csproj" />
+
+  </ItemGroup>
+</Project>

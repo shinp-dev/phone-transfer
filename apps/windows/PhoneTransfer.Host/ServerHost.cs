@@ -1,0 +1,48 @@
+using System.Net;
+using System.Security.Cryptography.X509Certificates;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
+using Microsoft.Extensions.DependencyInjection;
+using PhoneTransfer.Api;
+using PhoneTransfer.Application;
+
+namespace PhoneTransfer.Host;
+
+public static class ServerHost
+{
+    // No development HTTP listener or accept-any certificate fallback.
+    public static WebApplication Create(IServerIdentity identity, X509Certificate2 serverCertificate,
+        Func<X509Certificate2, bool> authorize, IPAddress address, int port)
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.Limits.MaxRequestBodySize = 4 * 1024 * 1024;
+            options.Listen(address, port, listen => listen.UseHttps(https =>
+            {
+                https.ServerCertificate = serverCertificate;
+                https.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
+                https.ClientCertificateValidation = (certificate, _, _) => authorize(certificate);
+            }));
+        });
+        builder.Services.AddSingleton(identity);
+        var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            var certificate = await context.Connection.GetClientCertificateAsync(context.RequestAborted);
+            // TLS sessions are reusable: revocation must also be checked on every request.
+            if (certificate is null || !authorize(certificate))
+            {
+                context.Response.StatusCode = 403;
+                await context.Response.WriteAsJsonAsync(new PhoneTransfer.Protocol.ApiError(
+                    "DEVICE_NOT_AUTHORIZED", "Device is not authorized.", false, context.TraceIdentifier), context.RequestAborted);
+                return;
+            }
+            await next(context);
+        });
+        app.MapServerEndpoints();
+        return app;
+    }
+}
