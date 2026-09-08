@@ -8,6 +8,7 @@ import java.io.File
 import java.util.UUID
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -102,7 +103,7 @@ private data class TransferOperationDocument(
 
 internal object TransferOperationPersistence {
     const val MAX_BYTES = 256 * 1024
-    const val MAX_OPERATIONS = 4
+    const val MAX_OPERATIONS = 1
     private const val VERSION = 1
     private val json = Json { ignoreUnknownKeys = false }
 
@@ -127,6 +128,34 @@ internal object TransferOperationPersistence {
             "DUPLICATE_TRANSFER_OPERATION"
         }
         operations.forEach(::validateOperation)
+    }
+
+    fun merge(
+        previous: PersistedTransferOperation,
+        next: PersistedTransferOperation
+    ): PersistedTransferOperation {
+        validateOperation(previous)
+        validateOperation(next)
+        check(previous.operationId == next.operationId) { "TRANSFER_OPERATION_ID_CHANGED" }
+        check(previous.kind == next.kind) { "TRANSFER_OPERATION_KIND_CHANGED" }
+        check(previous.deviceId == next.deviceId) { "TRANSFER_OPERATION_DEVICE_CHANGED" }
+        check(previous.shareId == next.shareId) { "TRANSFER_OPERATION_SHARE_CHANGED" }
+        check(previous.remotePath == next.remotePath) { "TRANSFER_OPERATION_PATH_CHANGED" }
+        check(previous.uri == next.uri) { "TRANSFER_OPERATION_URI_CHANGED" }
+        check(previous.idempotencyKey == next.idempotencyKey) { "TRANSFER_OPERATION_IDEMPOTENCY_CHANGED" }
+        check(!previous.persistedGrant || next.persistedGrant) { "TRANSFER_OPERATION_GRANT_REGRESSED" }
+        if (previous.sourceName != null) {
+            check(previous.sourceName == next.sourceName) { "TRANSFER_SOURCE_NAME_CHANGED" }
+            check(previous.totalSize == next.totalSize) { "TRANSFER_SOURCE_SIZE_CHANGED" }
+            check(previous.sha256 == next.sha256) { "TRANSFER_SOURCE_HASH_CHANGED" }
+        }
+        if (previous.serverTransferId != null) {
+            check(previous.serverTransferId == next.serverTransferId) { "SERVER_TRANSFER_ID_CHANGED" }
+        }
+        check(next.committedOffset >= previous.committedOffset) { "LOCAL_OFFSET_REGRESSED" }
+        val merged = if (previous.cancelRequested) next.copy(cancelRequested = true) else next
+        validateOperation(merged)
+        return merged
     }
 
     private fun validateOperation(operation: PersistedTransferOperation) {
@@ -218,9 +247,10 @@ internal class TransferOperationStore private constructor(context: Context) {
         val current = readUnlocked()
         val index = current.indexOfFirst { it.operationId == operation.operationId }
         check(index >= 0) { "TRANSFER_OPERATION_NOT_FOUND" }
-        val next = current.toMutableList().also { it[index] = operation }
+        val merged = TransferOperationPersistence.merge(current[index], operation)
+        val next = current.toMutableList().also { it[index] = merged }
         writeUnlocked(next)
-        return operation
+        return merged
     }
 
     @Synchronized
