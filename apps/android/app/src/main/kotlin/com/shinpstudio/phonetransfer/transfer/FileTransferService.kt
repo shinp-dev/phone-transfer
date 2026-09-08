@@ -35,9 +35,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class FileTransferService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -117,7 +119,11 @@ class FileTransferService : Service() {
                 } catch (error: CancellationException) {
                     val current = safeFind(currentOperation)
                     if (current?.cancelRequested == true) {
-                        if (finishCancellation(current)) {
+                        val converged =
+                  withContext(NonCancellable) {
+                      finishCancellation(current)
+                  }
+              if (converged) {
                             TransferStatusBus.cancel(currentOperation, kind)
                         } else {
                             publishResumable(current, "CANCEL_PENDING", canResume = false)
