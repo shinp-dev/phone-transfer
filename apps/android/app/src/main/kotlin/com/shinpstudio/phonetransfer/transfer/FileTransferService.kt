@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import androidx.core.net.toUri
 import com.shinpstudio.phonetransfer.R
 import com.shinpstudio.phonetransfer.data.FileTransferException
 import com.shinpstudio.phonetransfer.data.FileTransferRepository
@@ -111,7 +112,7 @@ class FileTransferService : Service() {
 
         if (kind == TransferKind.Upload) {
             val directory = intent.requireString(EXTRA_REMOTE_PATH)
-            val uri = Uri.parse(intent.requireString(EXTRA_URI))
+            val uri = intent.requireString(EXTRA_URI).toUri()
             val persisted = takePersistable(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             try {
                 val result =
@@ -126,7 +127,7 @@ class FileTransferService : Service() {
             }
         } else {
             val remotePath = intent.requireString(EXTRA_REMOTE_PATH)
-            val uri = Uri.parse(intent.requireString(EXTRA_URI))
+            val uri = intent.requireString(EXTRA_URI).toUri()
             val persisted = takePersistable(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             try {
                 val result =
