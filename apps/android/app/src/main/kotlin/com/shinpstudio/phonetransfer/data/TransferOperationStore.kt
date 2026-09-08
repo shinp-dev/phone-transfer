@@ -256,6 +256,7 @@ internal object TransferOperationPersistence {
     private fun requireUuid(value: String, code: String) {
         try {
             check(UUID.fromString(value).toString() == value) { code }
+            check(UUID.fromString(value) != UUID(0, 0)) { code }
         } catch (error: IllegalArgumentException) {
             throw IllegalStateException(code, error)
         }
@@ -365,10 +366,13 @@ internal class TransferOperationStore internal constructor(private val file: Dur
                     syncDirectory = { directory ->
                         val descriptor = Os.open(
                             directory.path,
-                            OsConstants.O_RDONLY or OsConstants.O_DIRECTORY,
+                            OsConstants.O_RDONLY,
                             0
                         )
                         try {
+                            check(OsConstants.S_ISDIR(Os.fstat(descriptor).st_mode)) {
+                                "TRANSFER_JOURNAL_PARENT_NOT_DIRECTORY"
+                            }
                             Os.fsync(descriptor)
                         } finally {
                             Os.close(descriptor)

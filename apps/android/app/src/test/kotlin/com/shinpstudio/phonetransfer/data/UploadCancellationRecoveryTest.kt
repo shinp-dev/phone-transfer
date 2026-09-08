@@ -180,6 +180,7 @@ class UploadCancellationRecoveryTest {
     @Test
     fun invalidCompletedResponsesKeepJournalAndNeverSendDelete() = runTest {
         val bad = listOf(
+            response("completed", 12).copy(transferId = UUID(0, 0).toString()),
             response("completed", 12).copy(transferId = UUID.randomUUID().toString()),
             response("completed", 12).copy(fileName = "other.bin"),
             response("completed", 12).copy(sha256 = "c".repeat(64)),

@@ -451,7 +451,8 @@ internal fun validateUploadTransfer(
     expectedId: String? = null
 ) {
     val validId = try {
-        UUID.fromString(transfer.transferId).toString() == transfer.transferId
+        val id = UUID.fromString(transfer.transferId)
+        id.toString() == transfer.transferId && id != UUID(0, 0)
     } catch (_: IllegalArgumentException) {
         false
     }
