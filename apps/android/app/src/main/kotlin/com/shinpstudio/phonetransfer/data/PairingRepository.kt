@@ -1,7 +1,6 @@
 package com.shinpstudio.phonetransfer.data
 
 import android.content.Context
-import android.util.AtomicFile
 import com.shinpstudio.phonetransfer.protocol.PairingRequest
 import com.shinpstudio.phonetransfer.protocol.PairingStatus
 import com.shinpstudio.phonetransfer.protocol.ServerInfo
@@ -9,7 +8,6 @@ import com.shinpstudio.phonetransfer.security.ClientIdentity
 import com.shinpstudio.phonetransfer.security.PairingInvitation
 import com.shinpstudio.phonetransfer.security.PairingProof
 import com.shinpstudio.phonetransfer.security.PinnedTls
-import java.io.File
 import java.io.IOException
 import java.time.Instant
 import java.util.Base64
@@ -22,7 +20,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.Call
@@ -33,55 +30,22 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
-@Serializable
-data class SavedPc(
-    val deviceId: String,
-    val displayName: String,
-    val endpoint: String,
-    val pin: String
-)
-
-class PairingRepository(private val context: Context) {
+class PairingRepository(context: Context) {
+    private val appContext = context.applicationContext
     private val json = Json { ignoreUnknownKeys = false }
-    private val file = AtomicFile(File(context.filesDir, "paired-pcs.json"))
+    private val savedPcs = SavedPcStore.get(appContext)
 
-    suspend fun saved(): List<SavedPc> = withContext(Dispatchers.IO) { readSaved() }
-
-    @Synchronized
-    private fun readSaved(): List<SavedPc> {
-        if (!file.baseFile.exists()) return emptyList()
-        val text = file.openRead().use { it.readBytes().toString(Charsets.UTF_8) }
-        return json.decodeFromString<List<SavedPc>>(text).also { pcs ->
-            check(pcs.size <= 100 && pcs.map { it.deviceId }.distinct().size == pcs.size)
-            pcs.forEach {
-                check(UUID.fromString(it.deviceId).toString() == it.deviceId)
-                PairingInvitation.lanEndpoint(it.endpoint)
-                check(it.pin.matches(Regex("[a-f0-9]{64}")))
-            }
-        }
-    }
-
-    @Synchronized
-    private fun writeSaved(pcs: List<SavedPc>) {
-        val output = file.startWrite()
-        try {
-            output.write(json.encodeToString(pcs).toByteArray(Charsets.UTF_8))
-            file.finishWrite(output)
-        } catch (error: Exception) {
-            file.failWrite(output)
-            throw error
-        }
-    }
+    suspend fun saved(): List<SavedPc> = withContext(Dispatchers.IO) { savedPcs.read() }
 
     suspend fun forget(id: String) = withContext(Dispatchers.IO) {
-        writeSaved(readSaved().filterNot { it.deviceId == id })
+        savedPcs.remove(id)
     }
 
     suspend fun connect(pc: SavedPc): ServerInfo = withContext(Dispatchers.IO) {
-        val identity = ClientIdentity.load(context)
-        val client = PinnedTls.client(pc.endpoint, pc.pin, identity)
+        val identity = ClientIdentity.load(appContext)
+        val client = PinnedTls.client(pc.lastKnownEndpoint, pc.pin, identity)
         try {
-            val request = Request.Builder().url("${pc.endpoint}/api/v1/info").build()
+            val request = Request.Builder().url("${pc.lastKnownEndpoint}/api/v1/info").build()
             val info = json.decodeFromString<ServerInfo>(execute(client, request, 200))
             check(info.deviceId == pc.deviceId && info.protocolVersion == 1L) {
                 "SERVER_IDENTITY_MISMATCH"
@@ -95,10 +59,10 @@ class PairingRepository(private val context: Context) {
     suspend fun pair(payload: String, onCode: suspend (String) -> Unit): SavedPc =
         withContext(Dispatchers.IO) {
             val invitation = PairingInvitation.parse(payload, Instant.now())
-            val pcs = readSaved()
-            check(pcs.none { it.deviceId == invitation.deviceId }) { "PC_ALREADY_SAVED" }
-            check(pcs.size < 100) { "PC_LIMIT" }
-            val identity = ClientIdentity.load(context)
+            val beforePairing = savedPcs.read()
+            check(beforePairing.none { it.deviceId == invitation.deviceId }) { "PC_ALREADY_SAVED" }
+            check(beforePairing.size < SavedPcRules.LIMIT) { "PC_LIMIT" }
+            val identity = ClientIdentity.load(appContext)
             val transcript = PairingProof.transcript(
                 identity.deviceId,
                 "Android",
@@ -146,7 +110,7 @@ class PairingRepository(private val context: Context) {
                     )
                     connect(pc)
                     ensureActive()
-                    writeSaved(pcs + pc)
+                    savedPcs.add(pc)
                     pc
                 }
             } finally {
@@ -170,6 +134,7 @@ class PairingRepository(private val context: Context) {
                         continuation.resumeWithException(IOException("CONNECTION_FAILED"))
                     }
                 }
+
                 override fun onResponse(call: Call, response: Response) {
                     try {
                         val result = response.use {
