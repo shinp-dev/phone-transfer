@@ -1,6 +1,7 @@
 package com.shinpstudio.phonetransfer.ui
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -66,6 +67,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                                 } else {
                                     "中断した転送は再開せず、中止処理を完了する必要があります"
                                 }
+                            }
+
+                            is TransferServiceState.RecoveryBlocked -> {
+                                "転送の復旧情報を安全に読み取れないため、新しい転送を停止しています (${transfer.code})"
                             }
 
                             is TransferServiceState.Completed -> {
@@ -245,8 +250,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 entries = if (active) emptyList() else current.entries,
                 currentPath = if (active) "" else current.currentPath,
                 connectionLabel =
-                "スマホの登録情報を削除しました。" +
-                    "再登録前にPC側でも端末を解除してください。"
+                    "スマホの登録情報を削除しました。" +
+                        "再登録前にPC側でも端末を解除してください。"
             )
         }
     }
@@ -272,7 +277,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 comparisonCode = null,
                 connectionLabel =
-                "中止しました。PC側で承認済みの場合はPCの端末一覧から解除してください。"
+                    "中止しました。PC側で承認済みの場合はPCの端末一覧から解除してください。"
             )
         }
     }
@@ -282,18 +287,34 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 transferOperations.read().firstOrNull()
             } catch (_: Exception) {
+                TransferStatusBus.recoveryBlocked("LOCAL_JOURNAL_INVALID")
                 null
             }
         } ?: return
         val kind =
             if (pending.kind == DurableTransferKind.Upload) TransferKind.Upload else TransferKind.Download
+        val grantFlag =
+            if (pending.kind == DurableTransferKind.Upload) {
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            } else {
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            }
+        val persistedGrantAvailable =
+            getApplication<Application>().contentResolver.persistedUriPermissions.any { permission ->
+                permission.uri == Uri.parse(pending.uri) &&
+                    if (grantFlag == Intent.FLAG_GRANT_READ_URI_PERMISSION) {
+                        permission.isReadPermission
+                    } else {
+                        permission.isWritePermission
+                    }
+            }
         TransferStatusBus.resumable(
             pending.operationId,
             kind,
             pending.committedOffset,
             pending.totalSize ?: 0L,
             if (pending.cancelRequested) "CANCEL_PENDING" else "PROCESS_INTERRUPTED",
-            pending.persistedGrant && !pending.cancelRequested
+            persistedGrantAvailable && !pending.cancelRequested
         )
         if (pending.cancelRequested) {
             FileTransferService.cancel(getApplication(), pending.operationId)
@@ -310,7 +331,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     entries = emptyList(),
                     currentPath = "",
                     connectionLabel =
-                    "${pc.displayName} に接続しました（PC側の受信フォルダは未設定です）"
+                        "${pc.displayName} に接続しました（PC側の受信フォルダは未設定です）"
                 )
             }
             return
@@ -348,7 +369,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     mutableState.update {
                         it.copy(
                             connectionLabel =
-                            "登録の有効期限が切れました。PCで新しいQRを表示してください。"
+                                "登録の有効期限が切れました。PCで新しいQRを表示してください。"
                         )
                     }
                 } catch (error: CancellationException) {
@@ -363,8 +384,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     mutableState.update {
                         it.copy(
                             connectionLabel =
-                            "接続または保存に失敗しました。LANとQR期限を確認してください。" +
-                                "再登録する場合はPC側の登録を解除してください。"
+                                "接続または保存に失敗しました。LANとQR期限を確認してください。" +
+                                    "再登録する場合はPC側の登録を解除してください。"
                         )
                     }
                 } finally {
@@ -376,5 +397,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun TransferServiceState.blocksNewTransfer(): Boolean =
-        this is TransferServiceState.Running || this is TransferServiceState.Resumable
+        this is TransferServiceState.Running ||
+            this is TransferServiceState.Resumable ||
+            this is TransferServiceState.RecoveryBlocked
 }
