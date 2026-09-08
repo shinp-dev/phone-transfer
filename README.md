@@ -2,9 +2,9 @@
 
 AndroidスマートフォンとWindows PCの間で、同一LAN内だけでファイル・テキスト・URLを直接渡すアプリです。クラウドや外部中継サーバーを転送経路に含めません。
 
-**現在のmainには、QR/mTLSペアリング、mDNS再発見、Windowsのhandle-safe共有フォルダ、認証済みファイルAPI、Android SAF upload/download、Foreground Service、Windows durable upload recovery、Android process-kill後のdurable upload recoveryまで実装済みです。** このbranchでは既存Protocol v1設計を維持したまま、AndroidからPCへの`plainText` / `url`送信も追加しています。コア機能は大きく揃っていますが、実Windows/Android端末での受入試験が未完了のため、まだMVP完成とは扱いません。
+**現在のmainには、QR/mTLSペアリング、mDNS再発見、Windowsのhandle-safe共有フォルダ、認証済みファイルAPI、Android SAF upload/download、Foreground Service、Windows durable upload recovery、Android process-kill後のdurable upload recovery、Android→PCの`plainText` / `url`送信まで実装済みです。** コア機能のコード/CI最終監査ではCritical・High・merge blockerとなるMediumは確認されていません。残る最大のMVP gateは実Windows/Android端末でのphysical acceptanceです。
 
-最新状況は [実装状況](docs/implementation-status.md) と [引き継ぎ資料](docs/handoff.md) を確認してください。
+最新状況は [実装状況](docs/implementation-status.md)、[最終監査](docs/final-audit.md)、[実機確認](docs/physical-device-acceptance.md) を確認してください。
 
 ## 構成
 
@@ -28,7 +28,7 @@ AndroidスマートフォンとWindows PCの間で、同一LAN内だけでファ
 - Android resume前は保存済みPC identity、実際のpersisted URI permission、source full hashを再検証。
 - serverが既にCompletedならAndroid sourceを再openせずcompletion receiptへ収束。
 - interrupted downloadはgeneric SAF destinationの安全な継続を保証できないため、process kill後の同一destination resumeを意図的に行わない。
-- Androidから接続中のPCへ、最大65,536文字のplain textまたはhttp/https URLをmTLSで送信。response loss時は同じidempotency keyで再試行する。
+- Androidから接続中のPCへ、最大65,536文字のplain textまたはhttp/https URLをmTLSで送信。transport response loss時は同じidempotency keyで再試行する。
 - Windowsは受信した最新text/URLを表示・コピーできる。URLは受信だけでは開かず、PCユーザーが明示的に「URLを開く」を押した場合だけ既定ブラウザーを起動する。
 
 ## 開発
@@ -63,16 +63,16 @@ Androidのlocal journalはserver progressのauthorityではありません。pro
 
 ## Text / URLの境界
 
-今回実装する配送方向はAndroid → PCだけです。wire modelは既存Protocol v1の`plainText` / `url`、per-device idempotency keyをそのまま使います。Windows側のuser-visible historyはこのincrementでは持たず、最新受信内容だけを表示します。PC→Android配送用listener/pollingも追加しません。
+現在実装している配送方向はAndroid → PCだけです。wire modelはProtocol v1の`plainText` / `url`、per-device idempotency keyを維持しています。Windows側のuser-visible persistent historyは持たず、最新受信内容だけを表示します。PC→Android配送用listener/pollingも実装していません。
 
 URLはabsolute `http` / `https` のみをURL kindとして受け付け、資格情報を埋め込んだURLは拒否します。受信時に自動実行・自動openは行いません。
 
-## 残っているもの
+## 現在のMVP gate
 
-MVP判定前に最も重要なのは実機acceptanceです。Android↔Windowsの実端末で、QR/mDNS/SAF、process kill、端末/PC再起動、Wi-Fi断、screen-off、FGS timeout、multi-GB、disk-full、sleep/resume、ReFSや実mounted-volume等を確認する必要があります。text/URLについても実端末からの送信、トレイ通知、copy、明示URL openを確認します。
+コード/機能の最終監査と、PR #14 merge後のmain CI #242は完了しています。次は [Physical-device acceptance](docs/physical-device-acceptance.md) のM01–M08を実Windows 11 + Android端末で実施します。
 
-実装として残る主な後続項目は、Windows journal retention/maintenance、DHCP/Wi-Fi adapter変更時の自動rebind、entry pagination、ACTION_SEND/MULTIPLE、text history / PC→Android delivery、必要ならbounded recovery schedulerです。これらはdurable upload correctnessや今回の片方向text送信とは分離して進めます。
+MVP後でもよい主な後続項目は、Windows transfer-journal retention/maintenance、DHCP/Wi-Fi adapter変更時の自動rebind、entry pagination、ACTION_SEND/MULTIPLE、text history / PC→Android delivery、必要ならbounded recovery scheduler、release/operations hardeningです。
 
 ## 設計
 
-[Architecture](docs/architecture/overview.md) · [Protocol](docs/protocol/v1.md) · [Threat model](docs/security/threat-model.md) · [Basic file transfer review](docs/security/basic-file-transfer-review.md) · [Android SAF review](docs/security/android-saf-transfer-review.md) · [ADR](docs/decisions)
+[Architecture](docs/architecture/overview.md) · [Protocol](docs/protocol/v1.md) · [Threat model](docs/security/threat-model.md) · [Final audit](docs/final-audit.md) · [Physical acceptance](docs/physical-device-acceptance.md) · [ADR](docs/decisions)

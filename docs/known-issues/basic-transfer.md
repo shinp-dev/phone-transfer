@@ -1,14 +1,43 @@
-# Basic transfer follow-ups
+# Current transfer follow-ups
 
-These items are intentionally outside the first Windows basic file-transfer and Android SAF/Foreground Service increments and are not release-complete claims:
+Updated: 2026-09-09 JST
 
-- Durable transfer DB, restart resume, committed-offset truncate/reconciliation and hard-crash staging cleanup.
-- Android process-kill recovery; the current Foreground Service and transfer-status bus are process-local.
-- The v1 upload contract requires total size and SHA-256 before create. Android therefore reads a SAF source once to hash/count it and reopens the same URI to upload. Nonseekable streams are supported, but providers that cannot reopen the selected document are not.
-- SAF download completion is not atomically renameable across arbitrary providers. A failed output is best-effort truncated; provider refusal can leave a partial destination, which is never reported as successful.
-- ACTION_SEND/MULTIPLE, multi-file queueing and share-sheet UX are not yet implemented.
-- Disk-full and crash-between-rename-and-durable-record recovery.
-- Immediate cancellation semantics for a download request that was already streaming when a device is revoked; subsequent requests are denied immediately.
-- Moving large-file Windows verification out of the simple process-local transfer lock as part of the durable/background transfer design.
-- Physical Windows 11/ReFS/mounted-volume and real Android multi-GB/SAF-provider acceptance.
-- The OpenAPI `servers` example still uses the historical documentation port; runtime endpoint authority remains the QR/mDNS API endpoint on 58443. Correct the example in a protocol-only cleanup without changing generated DTOs.
+This file replaces the old “basic transfer” follow-up list. Windows durable recovery, Android process-kill upload recovery and Android -> PC text/URL are now implemented on `main`; they are no longer deferred items.
+
+For the audited current boundary see [final audit](../final-audit.md). For the remaining MVP gate see [physical-device acceptance](../physical-device-acceptance.md).
+
+## Physical acceptance still required
+
+- real Windows 11 + Android QR/comparison-code pairing and mDNS rediscovery;
+- real SAF upload/download providers;
+- Android process-kill upload resume;
+- Windows process restart / PC reboot recovery;
+- interrupted download remains non-resumable to the same destination;
+- Wi-Fi interruption and reconnect;
+- screen-off / notification / dataSync timeout behavior;
+- multi-GB and disk-full behavior;
+- Windows sleep/resume;
+- NTFS/ReFS and real mounted-volume/reparse rejection;
+- Android -> PC text/URL, tray notification, copy and explicit-only URL open.
+
+## Deliberately deferred implementation
+
+- Windows transfer-journal retention / maintenance. Current bounded journal records must not be deleted casually because terminal proof, idempotency replay and staging ownership depend on them.
+- DHCP/Wi-Fi adapter-change automatic rebind; current UI supports manual reconnect/restart on the selected adapter.
+- entry-list pagination beyond the current bounded first page.
+- Android `ACTION_SEND` / `ACTION_SEND_MULTIPLE` and multi-file queue UX.
+- user-visible persistent text history and PC -> Android text delivery.
+- optional unattended/bounded recovery scheduler.
+- public release packaging/signing/installer polish.
+- repository hardening such as protected `main`, required CI checks and optional immutable SHA pinning for third-party Actions.
+
+## Low maintenance debt
+
+- Legacy process-local upload helpers still exist alongside the durable production paths. They are not currently wired as production upload authority, but later removal/isolation would reduce accidental-rewire risk.
+- Some Android APIs/dependencies produce non-blocking deprecation/version hints in CI; current lint has no errors or warnings.
+- Pairing bootstrap rate limiting is intentionally small/global and can sacrifice availability under same-LAN abuse without weakening proof/approval authentication.
+- Text duplicate suppression is bounded/process-local and is not a durable queue/history feature.
+
+## Protocol documentation note
+
+Runtime endpoint authority is the QR/mDNS API endpoint on port `58443`. If an OpenAPI `servers` example differs, it is documentation metadata only and must never be used by clients as runtime identity/routing authority. The Android product uses the QR/saved/discovered endpoint after pin and Device-ID verification.
