@@ -311,7 +311,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private fun hasPersistedGrant(operation: PersistedTransferOperation): Boolean {
         val expectedUri = Uri.parse(operation.uri)
         val readGrant = operation.kind == DurableTransferKind.Upload
-        return getApplication<Application>().contentResolver.persistedUriPermissions.any { permission ->
+        val permissions =
+            getApplication<Application>().contentResolver.persistedUriPermissions
+        return permissions.any { permission ->
             if (permission.uri != expectedUri) {
                 false
             } else if (readGrant) {
