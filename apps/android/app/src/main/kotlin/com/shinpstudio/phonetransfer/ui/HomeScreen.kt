@@ -52,15 +52,17 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         }
     val transfer = state.transfer
     val transferBlocking =
-        transfer is TransferServiceState.Running || transfer is TransferServiceState.Resumable
+        transfer is TransferServiceState.Running ||
+            transfer is TransferServiceState.Resumable ||
+            transfer is TransferServiceState.RecoveryBlocked
     val interactive = !state.busy && !transferBlocking
 
     Column(
         modifier =
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Phone Transfer", style = MaterialTheme.typography.headlineMedium)
@@ -214,6 +216,11 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 TextButton(onClick = viewModel::cancel) {
                     Text("この転送を中止")
                 }
+            }
+
+            is TransferServiceState.RecoveryBlocked -> {
+                Text("転送復旧データを検証できないため、新しい転送を開始しません。")
+                Text("アプリの復旧データを確認するまで安全側に停止します: ${transfer.code}")
             }
 
             is TransferServiceState.Completed -> {
