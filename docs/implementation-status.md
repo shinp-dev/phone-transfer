@@ -24,16 +24,17 @@ PR #7 added the standalone handle-safe filesystem adapter: pinned root/traversal
 
 `feature/basic-file-transfer` adds the first authenticated network use of that adapter:
 
-- `GET /api/v1/shares` exposes one logical share without returning the physical Windows root path;
+- `GET /api/v1/shares` exposes one logical share without returning the physical Windows root path; the share ID is an opaque random identifier scoped to the running service and is not derived from the root path;
 - `GET /api/v1/shares/{shareId}/entries` lists up to 200 handle-verified entries with size and last-modified metadata;
 - `POST /api/v1/transfers`, `PATCH .../content`, `GET`, `DELETE` and `POST .../complete` implement process-local, non-resumable upload state;
 - upload chunks are bounded to 4 MiB, written only to private staging, flushed before the committed offset advances, SHA-256 verified, then completed with the existing no-replace handle primitive;
 - transfer ownership is bound to the authenticated paired device and permissions are checked per operation;
+- revoking a paired device marks its active in-memory transfers cancelled and immediately attempts to close/delete their private staging; registry revocation remains authoritative even if an OS cleanup call reports failure;
 - active transfers are bounded per device and by a total staging quota;
 - `GET /api/v1/shares/{shareId}/content` streams from a stable open handle with a strong SHA-256 ETag and one open-ended `Range` plus `If-Match` resume form;
 - typed errors do not expose physical paths or native exception details.
 
-The current upload registry is intentionally process-local. A PC restart loses transfer status and abandons staging during process teardown/startup cleanup; durable committed offsets, DB/file reconciliation, crash recovery and restart resume are **not** claimed by this increment. The API reads at most one request chunk into a bounded 4 MiB buffer before the handle-safe write/flush commit, avoiding whole-file buffering and avoiding a partially committed request body without introducing truncate/recovery semantics yet.
+The current upload registry is intentionally process-local. An orderly server shutdown disposes active sessions and deletes their uncompleted staging through the handle-safe adapter. A hard process/OS crash can leave private staging remnants because durable startup reconciliation/cleanup is **not implemented yet**. Transfer status, committed offsets, DB/file reconciliation, crash recovery and restart resume are therefore not claimed by this increment. The API reads at most one request chunk into a bounded 4 MiB buffer before the handle-safe write/flush commit, avoiding whole-file buffering without pretending that this is durable resume semantics.
 
 Entry-list pagination cursors are also not implemented yet; the first page is capped at 200 and non-empty cursors are rejected rather than silently ignored.
 
@@ -44,9 +45,11 @@ Entry-list pagination cursors are also not implemented yet; the first page is ca
 - Android retries identical NSD candidates after transient authentication/network failure;
 - Android saved-PC persistence uses a versioned envelope, reads the legacy list format and rejects inputs above 128 KiB before JSON parsing;
 - Bouncy Castle is updated from 1.83 to 1.85.2;
-- Windows Forms consumes LAN adapter discovery through Host rather than directly reaching Infrastructure.
+- Windows Forms consumes LAN adapter discovery through Host rather than directly reaching Infrastructure;
+- basic file share IDs are opaque and process-scoped rather than deterministic root-path digests;
+- paired-device revocation also cancels and closes that device's active process-local transfer staging.
 
-Operational/release hardening still outside this increment: protect `main` with required PR/CI checks, apply explicit per-user ACL policy consistently to existing application-state stores, optionally pin third-party GitHub Actions to immutable SHAs, and complete real ReFS/volume-mount acceptance.
+Operational/release hardening still outside this increment: protect `main` with required PR/CI checks, apply explicit per-user ACL policy consistently to existing application-state stores, optionally pin third-party GitHub Actions to immutable SHAs, complete real ReFS/volume-mount acceptance, and add startup cleanup/reconciliation for crash-left staging as part of durable transfer recovery.
 
 ## Remaining Phase 2–6
 
@@ -64,6 +67,6 @@ Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, DHCP/Wi-Fi redis
 
 1. Finish CI/audit for the basic Windows file API and merge only after the handle-safe boundary and authorization paths pass review.
 2. Add Android transfer repository/service plus SAF without expanding `PairingRepository` into transfer ownership.
-3. Implement durable resume/recovery as a separate state-machine increment: persistent transfer DB, committed-offset recovery/truncate, startup reconciliation, crash between rename/DB commit, disk-full and cancellation/revocation races.
+3. Implement durable resume/recovery as a separate state-machine increment: persistent transfer DB, committed-offset recovery/truncate, startup staging reconciliation/cleanup, crash between rename/DB commit, disk-full and cancellation/revocation races.
 4. Add foreground/background lifetime and text/history separately.
 5. Run physical Windows/Android acceptance throughout; CI is not product acceptance.
