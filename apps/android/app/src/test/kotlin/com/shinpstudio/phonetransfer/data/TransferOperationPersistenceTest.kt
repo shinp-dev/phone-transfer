@@ -62,6 +62,62 @@ class TransferOperationPersistenceTest {
     }
 
     @Test
+    fun staleCheckpointCannotClearConcurrentDurableCancelRequest() {
+        val base = upload()
+            .withSource("resume.bin", 12, HASH, 2)
+            .withServer(UUID.randomUUID().toString(), 4, 3)
+        val cancelled = base.requestingCancel(4)
+        val staleWriter = base.withOffset(8, 5)
+
+        val merged = TransferOperationPersistence.merge(cancelled, staleWriter)
+
+        assertTrue(merged.cancelRequested)
+        assertEquals(8L, merged.committedOffset)
+    }
+
+    @Test
+    fun checkpointOffsetAndServerIdentityCannotRegressOrChange() {
+        val base = upload()
+            .withGrant(true, 2)
+            .withSource("resume.bin", 12, HASH, 3)
+            .withServer(UUID.randomUUID().toString(), 8, 4)
+
+        assertThrows(IllegalStateException::class.java) {
+            TransferOperationPersistence.merge(base, base.withOffset(4, 5))
+        }
+        assertThrows(IllegalStateException::class.java) {
+            TransferOperationPersistence.merge(
+                base,
+                base.copy(serverTransferId = UUID.randomUUID().toString(), updatedAtEpochMillis = 5)
+            )
+        }
+        assertThrows(IllegalStateException::class.java) {
+            TransferOperationPersistence.merge(
+                base,
+                base.copy(persistedGrant = false, updatedAtEpochMillis = 5)
+            )
+        }
+    }
+
+    @Test
+    fun sourceIdentityCannotChangeAfterHashCheckpoint() {
+        val base = upload().withSource("resume.bin", 12, HASH, 2)
+
+        assertThrows(IllegalStateException::class.java) {
+            TransferOperationPersistence.merge(
+                base,
+                base.copy(sourceName = "other.bin", updatedAtEpochMillis = 3)
+            )
+        }
+        assertThrows(IllegalStateException::class.java) {
+            TransferOperationPersistence.merge(
+                base,
+                base.copy(totalSize = 11, committedOffset = 0, updatedAtEpochMillis = 3)
+            )
+        }
+    }
+
+    @Test
     fun downloadRecoveryPersistsOnlyCapabilityAndRestartsFromZero() {
         val operation = PersistedTransferOperation.download(
             UUID.randomUUID().toString(),
@@ -82,14 +138,16 @@ class TransferOperationPersistenceTest {
     }
 
     @Test
-    fun unknownSchemaAndDuplicateOperationIdsFailClosed() {
+    fun unknownSchemaAndMultiplePendingOperationsFailClosed() {
         val operation = upload()
         val unknown = "{\"version\":2,\"operations\":[]}".toByteArray()
         assertThrows(IllegalStateException::class.java) {
             TransferOperationPersistence.decode(unknown)
         }
         assertThrows(IllegalStateException::class.java) {
-            TransferOperationPersistence.encode(listOf(operation, operation))
+            TransferOperationPersistence.encode(
+                listOf(operation, upload().copy(uri = "content://provider/document/other"))
+            )
         }
     }
 
