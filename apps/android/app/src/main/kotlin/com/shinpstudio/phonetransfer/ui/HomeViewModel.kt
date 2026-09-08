@@ -2,6 +2,7 @@ package com.shinpstudio.phonetransfer.ui
 
 import android.app.Application
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.shinpstudio.phonetransfer.data.DurableTransferKind
@@ -308,7 +309,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun hasPersistedGrant(operation: PersistedTransferOperation): Boolean {
-        val expectedUri = Uri.parse(operation.uri)
+        val expectedUri = operation.uri.toUri()
         val readGrant = operation.kind == DurableTransferKind.Upload
         val permissions =
             getApplication<Application>().contentResolver.persistedUriPermissions
