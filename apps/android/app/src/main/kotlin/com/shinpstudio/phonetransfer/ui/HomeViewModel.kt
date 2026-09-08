@@ -54,8 +54,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         runOperation {
-            mutableState.update { it.copy(pcs = repository.saved()) }
             restoreInterruptedTransfer()
+            mutableState.update { it.copy(pcs = repository.saved()) }
         }
         viewModelScope.launch {
             TransferStatusBus.state.collect { transfer ->
@@ -295,7 +295,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         } ?: return
         val kind = pending.kind.toTransferKind()
         val persistedGrantAvailable = hasPersistedGrant(pending)
-        TransferStatusBus.resumable(
+        TransferStatusBus.restoreResumable(
             pending.operationId,
             kind,
             pending.committedOffset,
