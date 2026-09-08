@@ -256,6 +256,19 @@ public sealed class WindowsShareFileSystemTests : IDisposable
         Assert.Equal("uploaded", File.ReadAllText(destination));
     }
 
+    [Theory]
+    [InlineData("a")]
+    [InlineData("空")]
+    public void EmptyFileCompletesWithSingleCharacterDestination(string name)
+    {
+        using var session = Open();
+        using var staging = session.CreateStaging(Relative(name));
+        staging.CompleteNoReplace();
+        using var file = session.OpenRead(Relative(name));
+        Assert.Equal(0, file.Length);
+        Assert.Equal(0, file.Read(0, new byte[1]));
+    }
+
     [Fact]
     public void CompletionCannotReplaceDirectoryOrJunction()
     {

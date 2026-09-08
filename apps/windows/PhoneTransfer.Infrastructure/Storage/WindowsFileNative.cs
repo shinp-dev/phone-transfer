@@ -171,17 +171,20 @@ internal static class WindowsFileNative
         var lengthOffset = parentOffset + IntPtr.Size;
         var nameOffset = lengthOffset + sizeof(uint);
         var bytes = Encoding.Unicode.GetBytes(name);
-        var buffer = Marshal.AllocHGlobal(nameOffset + bytes.Length + 2);
+        // Include the terminator/padding in the buffer size, while FileNameLength excludes it.
+        // This also satisfies the native structure minimum for a one-character name on x64.
+        var size = nameOffset + bytes.Length + 2;
+        var buffer = Marshal.AllocHGlobal(size);
         var pinned = false;
         try
         {
-            Marshal.Copy(new byte[nameOffset + bytes.Length + 2], 0, buffer, nameOffset + bytes.Length + 2);
+            Marshal.Copy(new byte[size], 0, buffer, size);
             parent.DangerousAddRef(ref pinned);
             Marshal.WriteIntPtr(buffer, parentOffset, parent.DangerousGetHandle());
             Marshal.WriteInt32(buffer, lengthOffset, bytes.Length);
             Marshal.Copy(bytes, 0, IntPtr.Add(buffer, nameOffset), bytes.Length);
             // FileRenameInformation = 10. ReplaceIfExists remains FALSE, single-component destination.
-            var status = NtSetInformationFile(file, out _, buffer, (uint)(nameOffset + bytes.Length), 10);
+            var status = NtSetInformationFile(file, out _, buffer, (uint)size, 10);
             if (status < 0) throw Error(unchecked((int)RtlNtStatusToDosError(status)));
         }
         finally
