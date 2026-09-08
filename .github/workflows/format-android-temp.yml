@@ -34,83 +34,42 @@ jobs:
           from pathlib import Path
 
           repository = Path('apps/android/app/src/main/kotlin/com/shinpstudio/phonetransfer/data/FileTransferRepository.kt')
-          text = repository.read_text()
-          old = '''        withClient(pc) { client ->
-              var transferId: String? = null
-              var completed = false
-              try {
-                  val create =
-                      CreateTransfer(
-                          shareId,
-                          destination,
-                          source.size,
-                          source.sha256,
-                          UUID.randomUUID().toString()
-                      )
-                  val created = createTransferWithResponseRecovery(client, pc, create)
-          '''
-          new = '''        withClient(pc) { client ->
-              val create =
-                  CreateTransfer(
-                      shareId,
-                      destination,
-                      source.size,
-                      source.sha256,
-                      UUID.randomUUID().toString()
-                  )
-              var transferId: String? = null
-              var completed = false
-              try {
-                  val created = createTransferWithResponseRecovery(client, pc, create)
-          '''
-          if old not in text:
-              raise SystemExit('create block not found')
-          text = text.replace(old, new, 1)
+          lines = repository.read_text().splitlines()
+          upload = lines.index('    suspend fun upload(')
+          with_client = lines.index('        withClient(pc) { client ->', upload)
+          create = lines.index('                val create =', with_client)
+          create_end = lines.index('                    )', create)
+          block = lines[create:create_end + 1]
+          del lines[create:create_end + 1]
+          lines[with_client + 1:with_client + 1] = [line[4:] for line in block]
 
-          old = '''            } catch (error: Exception) {
-                  if (transferId != null && !completed) {
-                      withContext(NonCancellable) {
-                          try {
-                              cancelTransfer(client, pc, transferId)
-                          } catch (_: Exception) {
-                              // Server-side shutdown/recovery cleanup remains the final fallback.
-                          }
-                      }
-                  }
-                  throw error
-              }
-          '''
-          new = '''            } catch (error: Exception) {
-                  if (!completed) {
-                      withContext(NonCancellable) {
-                          try {
-                              if (transferId == null) {
-                                  transferId = createTransferWithResponseRecovery(client, pc, create).transferId
-                              }
-                              transferId?.let { cancelTransfer(client, pc, it) }
-                          } catch (_: Exception) {
-                              // Server-side shutdown/recovery cleanup remains the final fallback.
-                          }
-                      }
-                  }
-                  throw error
-              }
-          '''
-          if old not in text:
-              raise SystemExit('cleanup block not found')
-          repository.write_text(text.replace(old, new, 1))
+          catch = lines.index('            } catch (error: Exception) {', with_client)
+          old_end = lines.index('                throw error', catch)
+          replacement = [
+              '            } catch (error: Exception) {',
+              '                if (!completed) {',
+              '                    withContext(NonCancellable) {',
+              '                        try {',
+              '                            if (transferId == null) {',
+              '                                transferId = createTransferWithResponseRecovery(client, pc, create).transferId',
+              '                            }',
+              '                            transferId?.let { cancelTransfer(client, pc, it) }',
+              '                        } catch (_: Exception) {',
+              '                            // Server-side shutdown/recovery cleanup remains the final fallback.',
+              '                        }',
+              '                    }',
+              '                }',
+              '                throw error',
+          ]
+          lines[catch:old_end + 1] = replacement
+          repository.write_text('\n'.join(lines) + '\n')
 
           service = Path('apps/android/app/src/main/kotlin/com/shinpstudio/phonetransfer/transfer/FileTransferService.kt')
-          text = service.read_text()
-          old = '''        transferJob?.cancel(CancellationException("FOREGROUND_SERVICE_TIMEOUT"))
-              stopSelf(startId)
-          '''
-          new = '''        transferJob?.cancel(CancellationException("FOREGROUND_SERVICE_TIMEOUT"))
-              stopSelf()
-          '''
-          if old not in text:
-              raise SystemExit('timeout block not found')
-          service.write_text(text.replace(old, new, 1))
+          lines = service.read_text().splitlines()
+          timeout = lines.index('    override fun onTimeout(startId: Int, fgsType: Int) {')
+          stop = lines.index('        stopSelf(startId)', timeout)
+          lines[stop] = '        stopSelf()'
+          service.write_text('\n'.join(lines) + '\n')
           PY
       - run: gradle -p apps/android spotlessApply
       - name: Commit formatter output
