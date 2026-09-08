@@ -2,7 +2,7 @@
 
 Updated: 2026-09-08
 
-See [development handoff](handoff.md) for continuation order. The repository is still pre-MVP: pairing, mDNS, shared-folder configuration, Windows handle-safe filesystem and the first authenticated Windows file-transfer API are implemented. Android SAF and durable resume/recovery are not yet implemented.
+See [development handoff](handoff.md) for continuation order. The repository is still pre-MVP: pairing, mDNS, shared-folder configuration, Windows handle-safe filesystem, the first authenticated Windows file-transfer API, and Android SAF/Foreground Service transfer ownership are implemented. Durable restart resume/recovery and full physical-device acceptance are not yet implemented.
 
 ## Phase 1 — complete
 
@@ -16,13 +16,13 @@ Android includes QR validation, offline scanning, Keystore identity, pinned HTTP
 
 Production mDNS is wired: Windows advertises `_phone-transfer._tcp` through Windows DNS-SD on the selected private IPv4 interface; Android uses `NsdManager` with a multicast lock. Discovery is routing metadata only. A changed endpoint is saved only after the stored SPKI pin, client certificate and stable `/api/v1/info` Device ID all verify.
 
-## Phase 3 — Windows handle-safe filesystem and basic file API implemented
+## Phase 3 — handle-safe Windows file API and Android basic transfer implemented
 
 Windows can select, persist and clear one receive-folder root. Configuration accepts only existing local NTFS/ReFS folders, rejects UNC paths, volume roots, overlap with application data and reparse points in the configured ancestry.
 
 PR #7 added the standalone handle-safe filesystem adapter: pinned root/traversal, bounded handle-based listing, stable file reads, private ACL-protected staging and atomic same-volume no-overwrite completion. Child components are opened relative to retained directory handles and reparse points/junctions/symlinks/hardlinks/replacement races fail closed. PR #7 final Windows CI passed 109 tests with 0 skipped.
 
-`feature/basic-file-transfer` adds the first authenticated network use of that adapter:
+PR #9 added the first authenticated network use of that adapter:
 
 - `GET /api/v1/shares` exposes one logical share without returning the physical Windows root path; the share ID is an opaque random identifier scoped to the running service and is not derived from the root path;
 - `GET /api/v1/shares/{shareId}/entries` lists up to 200 handle-verified entries with size and last-modified metadata;
@@ -34,7 +34,19 @@ PR #7 added the standalone handle-safe filesystem adapter: pinned root/traversal
 - `GET /api/v1/shares/{shareId}/content` streams from a stable open handle with a strong SHA-256 ETag and one open-ended `Range` plus `If-Match` resume form;
 - typed errors do not expose physical paths or native exception details.
 
-The current upload registry is intentionally process-local. An orderly server shutdown disposes active sessions and deletes their uncompleted staging through the handle-safe adapter. A hard process/OS crash can leave private staging remnants because durable startup reconciliation/cleanup is **not implemented yet**. Transfer status, committed offsets, DB/file reconciliation, crash recovery and restart resume are therefore not claimed by this increment. The API reads at most one request chunk into a bounded 4 MiB buffer before the handle-safe write/flush commit, avoiding whole-file buffering without pretending that this is durable resume semantics.
+`feature/android-saf-transfer` adds the Android client boundary without expanding `PairingRepository`:
+
+- `FileTransferRepository` owns authenticated file API calls and creates a dedicated pinned-mTLS OkHttp client using the saved SPKI pin plus Android Keystore client identity;
+- `RemotePathRules` mirrors the Windows wire syntax boundary before sending SAF display names or remote paths; content URIs are never converted to filesystem paths;
+- `ACTION_OPEN_DOCUMENT` selects upload sources and `CREATE_DOCUMENT` selects download destinations;
+- upload hashes and counts the source stream first, reopens the URI, sends 1 MiB chunks with exact `Upload-Offset`, and verifies server transfer status after ambiguous network responses before deciding whether to continue/cancel;
+- source streams need not be seekable, but the provider must permit a second open because v1 requires SHA-256 and total size before transfer creation;
+- download streams directly into the SAF destination, checks declared length, recomputes the strong SHA-256 ETag and reports success only when both match; a failed destination is best-effort truncated and is never reported as complete;
+- long-running transfer ownership is in a non-exported `dataSync` Foreground Service rather than Activity/ViewModel; the UI observes a process-local StateFlow and can cancel the service;
+- the service attempts temporary-to-persistable SAF grants for the operation and releases any grant it successfully persisted when the transfer ends;
+- only one Android foreground transfer is owned at a time in this basic increment.
+
+The current server upload registry and Android transfer-status bus are intentionally process-local. An orderly Windows shutdown disposes active sessions and deletes their uncompleted staging through the handle-safe adapter. A hard PC/Android process or OS crash can leave server staging remnants because durable startup reconciliation/cleanup is **not implemented yet**. Transfer status, committed offsets, DB/file reconciliation, crash recovery and restart resume are therefore not claimed by this increment.
 
 Entry-list pagination cursors are also not implemented yet; the first page is capped at 200 and non-empty cursors are rejected rather than silently ignored.
 
@@ -47,13 +59,15 @@ Entry-list pagination cursors are also not implemented yet; the first page is ca
 - Bouncy Castle is updated from 1.83 to 1.85.2;
 - Windows Forms consumes LAN adapter discovery through Host rather than directly reaching Infrastructure;
 - basic file share IDs are opaque and process-scoped rather than deterministic root-path digests;
-- paired-device revocation also cancels and closes that device's active process-local transfer staging.
+- paired-device revocation also cancels and closes that device's active process-local transfer staging;
+- Android SAF paths stay as capabilities/URIs and never become OS path strings; upload and download both perform end-to-end SHA-256 validation against the Windows API contract;
+- Android long-running file I/O is owned by a non-exported dataSync Foreground Service.
 
 Operational/release hardening still outside this increment: protect `main` with required PR/CI checks, apply explicit per-user ACL policy consistently to existing application-state stores, optionally pin third-party GitHub Actions to immutable SHAs, complete real ReFS/volume-mount acceptance, and add startup cleanup/reconciliation for crash-left staging as part of durable transfer recovery.
 
 ## Remaining Phase 2–6
 
-Remaining: physical Android-to-Windows pairing/mDNS acceptance, Android SAF file selection/export and transfer UI/service ownership, durable resume/recovery, foreground/background transfer lifetime, text/history, recovery scheduler and large-file/device acceptance.
+Remaining: physical Android-to-Windows pairing/mDNS/SAF acceptance, durable resume/recovery, restart/process-kill reconciliation, ACTION_SEND/MULTIPLE, text/history, recovery scheduler and large-file/device acceptance.
 
 Windows does not yet automatically rebind after DHCP/Wi-Fi adapter changes; the user can currently restart the connection from the tray UI.
 
@@ -61,12 +75,12 @@ Windows does not yet automatically rebind after DHCP/Wi-Fi adapter changes; the 
 
 Windows 11: initial launch/tray exit, private-network firewall, DNS-SD advertisement, QR approval, non-exportable key, DHCP/Wi-Fi behavior, ReFS/real mounted-volume filesystem behavior, sleep/resume, multi-GB streaming, disk-full and later crash/recovery behavior.
 
-Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, DHCP/Wi-Fi rediscovery, ACTION_SEND/MULTIPLE content URIs, SAF providers (seekable and nonseekable), 4 GiB+ transfer, notification permission, screen-off, process kill and foreground-service timeout.
+Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, DHCP/Wi-Fi rediscovery, `ACTION_OPEN_DOCUMENT` / `CREATE_DOCUMENT`, seekable and nonseekable/reopenable SAF providers, 4 GiB+ transfer, notification permission behavior, screen-off, dataSync foreground-service timeout and process kill. ACTION_SEND/MULTIPLE remains a later UX increment.
 
 ## Continuation order
 
-1. Finish CI/audit for the basic Windows file API and merge only after the handle-safe boundary and authorization paths pass review.
-2. Add Android transfer repository/service plus SAF without expanding `PairingRepository` into transfer ownership.
+1. Finish CI/audit for `feature/android-saf-transfer`; verify manifest/Foreground Service restrictions, URI capability handling, mTLS ownership, hash verification and cancellation without weakening the Windows boundary.
+2. Run basic real-device Android↔Windows upload/download acceptance, including nonseekable/reopenable providers and failure during hashing/upload/export.
 3. Implement durable resume/recovery as a separate state-machine increment: persistent transfer DB, committed-offset recovery/truncate, startup staging reconciliation/cleanup, crash between rename/DB commit, disk-full and cancellation/revocation races.
-4. Add foreground/background lifetime and text/history separately.
+4. Add ACTION_SEND/MULTIPLE and text/history separately.
 5. Run physical Windows/Android acceptance throughout; CI is not product acceptance.

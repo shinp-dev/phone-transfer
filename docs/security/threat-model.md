@@ -9,14 +9,15 @@ Status: design and implementation review in progress, not a completed security c
 | QR observer | Register a persistent attacker key | Single-use 120-second token, proof of possession, local PC approval, rate limit, no logged tokens |
 | Previously allowed phone | Keep-alive TLS or cached certificate | Recheck authorization on every request; registry revocation is authoritative; real same-connection rejection test; active process-local upload staging cancelled on local revoke |
 | Paired resource abuser | Disk/memory exhaustion, huge JSON, unbounded requests | Metadata/body/quota limits; per-device request and transfer bounds; global connection cap; cleanup ownership and active-transfer serialization |
-| Crash or network loss | Partial file appears complete, wrong offset | Private staging, hash verification and atomic no-overwrite completion in the basic API; durable offsets/startup reconciliation remain required before restart-resume claims |
+| Malicious/buggy SAF provider | Path confusion, changed source between hash/upload, partial/corrupt export | Never convert content URI to OS path; validate display name separately; server verifies upload SHA-256; Android verifies download length + strong SHA-256 ETag; provider failures never report success |
+| Crash or network loss | Partial file appears complete, wrong offset | Private staging, hash verification and atomic Windows no-overwrite completion; Android Foreground Service ownership; durable offsets/startup reconciliation remain required before restart-resume claims |
 | Shared text sender | Credential disclosure or malicious URL | Opt-out history, restricted local storage, no text logs, explicit http/https open action |
 
 ## Trust boundaries
 
 Local Windows account controls shares and approvals. A local administrator, kernel compromise, compromised Android OS and malware already acting as the logged-in Windows user are outside the protection boundary. This does not excuse reparse-point attacks in configured shares: remote paired devices never receive OS-path selection or link-creation APIs.
 
-Private Windows state belongs under per-user LocalApplicationData with explicit current-user ACL. Keys use CurrentUser certificate store backed by non-exportable CNG keys. A share's private staging directory has restricted current-user ACL and is hidden from API listing. Android backup is disabled; signing keys remain in Android Keystore. Tokens, plaintext histories and filenames must not enter structured operational logs. ASP.NET Core routine request diagnostics are filtered below Warning because file paths are carried in query strings.
+Private Windows state belongs under per-user LocalApplicationData with explicit current-user ACL. Keys use CurrentUser certificate store backed by non-exportable CNG keys. A share's private staging directory has restricted current-user ACL and is hidden from API listing. Android backup is disabled; signing keys remain in Android Keystore. Android SAF URIs are capabilities and stay inside `ContentResolver`; the app does not resolve them to filesystem paths. Tokens, plaintext histories and filenames must not enter structured operational logs. ASP.NET Core routine request diagnostics are filtered below Warning because file paths are carried in query strings.
 
 ## Current basic-file API gate
 
@@ -26,6 +27,16 @@ Uploads are process-local and deliberately non-durable: one request body is boun
 
 Downloads use a stable open handle and a strong SHA-256 ETag. Only a single open-ended byte range with matching `If-Match` is supported. An already-started request is not claimed to be a durable cancellation primitive; full revoke/cancel/crash ordering belongs to the later transfer state-machine work.
 
+## Android SAF / Foreground Service gate
+
+Android file transfer is separated from `PairingRepository`. `FileTransferRepository` always builds a pinned-mTLS client from the saved endpoint/SPKI pin and Android Keystore client identity. Remote paths are syntactically validated before requests, but Windows handle containment remains the authority.
+
+Upload sources come from `ACTION_OPEN_DOCUMENT`. Because v1 requires total size and SHA-256 up front, the source is streamed once to compute both, then the same URI is reopened for upload. No seek or filesystem-path conversion is used. If the provider changes bytes between passes, server-side SHA-256 completion fails. Ambiguous PATCH/complete response loss is reconciled against the process-local transfer status before retry/cancel decisions, avoiding blind duplicate chunk writes.
+
+Download destinations come from `CREATE_DOCUMENT`. The full response is written through `ContentResolver`; Android checks Content-Length and recomputes the strong SHA-256 ETag before reporting completion. Failure triggers best-effort truncation, but arbitrary SAF providers do not guarantee atomic rollback, so physical provider tests remain a release gate.
+
+Long-running file I/O is owned by a non-exported `dataSync` Foreground Service. Activity/ViewModel only select capabilities, start/cancel the service, and observe process-local status. A hard Android process kill is not durable recovery and can still leave Windows private staging until later reconciliation.
+
 ## Remaining release gates
 
-Before claiming a transfer-capable MVP: add Android SAF/foreground-service ownership; implement persistent transfer records, committed-offset recovery/truncate, startup staging reconciliation, crash-between-rename-and-DB reconciliation and disk-full recovery; execute physical Windows/Android upload/download/interruption tests including malicious metadata, junction replacement, SAF provider failure, Android process kill, Windows sleep/recovery, ReFS/mounted-volume behavior and multi-GB files.
+Before claiming a transfer-capable MVP: implement persistent transfer records, committed-offset recovery/truncate, startup staging reconciliation, crash-between-rename-and-DB reconciliation and disk-full recovery; execute physical Windows/Android upload/download/interruption tests including malicious metadata, junction replacement, SAF provider failure, Android process kill, notification denied/allowed behavior, dataSync timeout, Windows sleep/recovery, ReFS/mounted-volume behavior and multi-GB files. ACTION_SEND/MULTIPLE and text/history remain later UX increments.
