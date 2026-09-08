@@ -28,6 +28,90 @@ jobs:
         with:
           gradle-version: '8.13'
       - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+      - name: Apply response-loss cleanup hardening
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          repository = Path('apps/android/app/src/main/kotlin/com/shinpstudio/phonetransfer/data/FileTransferRepository.kt')
+          text = repository.read_text()
+          old = '''        withClient(pc) { client ->
+              var transferId: String? = null
+              var completed = false
+              try {
+                  val create =
+                      CreateTransfer(
+                          shareId,
+                          destination,
+                          source.size,
+                          source.sha256,
+                          UUID.randomUUID().toString()
+                      )
+                  val created = createTransferWithResponseRecovery(client, pc, create)
+          '''
+          new = '''        withClient(pc) { client ->
+              val create =
+                  CreateTransfer(
+                      shareId,
+                      destination,
+                      source.size,
+                      source.sha256,
+                      UUID.randomUUID().toString()
+                  )
+              var transferId: String? = null
+              var completed = false
+              try {
+                  val created = createTransferWithResponseRecovery(client, pc, create)
+          '''
+          if old not in text:
+              raise SystemExit('create block not found')
+          text = text.replace(old, new, 1)
+
+          old = '''            } catch (error: Exception) {
+                  if (transferId != null && !completed) {
+                      withContext(NonCancellable) {
+                          try {
+                              cancelTransfer(client, pc, transferId)
+                          } catch (_: Exception) {
+                              // Server-side shutdown/recovery cleanup remains the final fallback.
+                          }
+                      }
+                  }
+                  throw error
+              }
+          '''
+          new = '''            } catch (error: Exception) {
+                  if (!completed) {
+                      withContext(NonCancellable) {
+                          try {
+                              if (transferId == null) {
+                                  transferId = createTransferWithResponseRecovery(client, pc, create).transferId
+                              }
+                              transferId?.let { cancelTransfer(client, pc, it) }
+                          } catch (_: Exception) {
+                              // Server-side shutdown/recovery cleanup remains the final fallback.
+                          }
+                      }
+                  }
+                  throw error
+              }
+          '''
+          if old not in text:
+              raise SystemExit('cleanup block not found')
+          repository.write_text(text.replace(old, new, 1))
+
+          service = Path('apps/android/app/src/main/kotlin/com/shinpstudio/phonetransfer/transfer/FileTransferService.kt')
+          text = service.read_text()
+          old = '''        transferJob?.cancel(CancellationException("FOREGROUND_SERVICE_TIMEOUT"))
+              stopSelf(startId)
+          '''
+          new = '''        transferJob?.cancel(CancellationException("FOREGROUND_SERVICE_TIMEOUT"))
+              stopSelf()
+          '''
+          if old not in text:
+              raise SystemExit('timeout block not found')
+          service.write_text(text.replace(old, new, 1))
+          PY
       - run: gradle -p apps/android spotlessApply
       - name: Commit formatter output
         run: |
@@ -37,5 +121,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/android
-          git commit -m "style(android): apply spotless formatting"
+          git commit -m "fix(android): close response-loss cleanup races"
           git push origin HEAD:feature/android-saf-transfer
