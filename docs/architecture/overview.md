@@ -15,7 +15,7 @@ Windows is the only listener. Android initiates discovery, pairing and API reque
 
 ## Concurrency and recovery design
 
-A per-transfer asynchronous lock serializes append, verify, complete, cancel and cleanup. Durable metadata is the authority; acknowledged offsets follow flushed file bytes and committed metadata. Startup truncates bytes beyond the durable offset. Missing/short files become failed, never silently resumed. Completion uses a same-volume rename without overwrite; reconciliation checks the expected destination and digest if a crash occurs between rename and database commit.
+A per-transfer mutation gate serializes append, verify, complete, cancel and cleanup without holding one global transfer lock across long file I/O. Durable metadata is the authority; acknowledged offsets follow flushed file bytes and committed metadata. Startup truncates bytes beyond the durable offset. Missing/short files become failed, never silently resumed. Completion uses a same-volume rename without overwrite; reconciliation proves the expected destination by persisted file identity, size and digest if a crash occurs between rename and database commit.
 
 Revocation removes authorization before cancelling active operations. Each API request and each chunk commit checks current authorization. Cached TLS handshakes alone cannot grant application permission. A request already committed before revocation cannot be undone.
 
