@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PhoneTransfer.Api;
 using PhoneTransfer.Application;
+using PhoneTransfer.Domain;
 
 namespace PhoneTransfer.Host;
 
@@ -16,7 +17,8 @@ public static class ServerHost
 {
     // No development HTTP listener or accept-any certificate fallback.
     public static WebApplication Create(IServerIdentity identity, X509Certificate2 serverCertificate,
-        Func<X509Certificate2, bool> authorize, IPAddress address, int port)
+        Func<X509Certificate2, PairedDevice?> authorize, IPAddress address, int port,
+        Action<PairedDevice>? onAuthorizedRequest = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
         builder.Logging.ClearProviders();
@@ -34,7 +36,7 @@ public static class ServerHost
                 https.ServerCertificate = serverCertificate;
                 https.SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13;
                 https.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
-                https.ClientCertificateValidation = (certificate, _, _) => authorize(certificate);
+                https.ClientCertificateValidation = (certificate, _, _) => authorize(certificate) is not null;
             }));
         });
         builder.Services.AddSingleton(identity);
@@ -43,13 +45,15 @@ public static class ServerHost
         {
             var certificate = await context.Connection.GetClientCertificateAsync(context.RequestAborted);
             // TLS sessions are reusable: revocation must also be checked on every request.
-            if (certificate is null || !authorize(certificate))
+            var device = certificate is null ? null : authorize(certificate);
+            if (device is null)
             {
                 context.Response.StatusCode = 403;
                 await context.Response.WriteAsJsonAsync(new PhoneTransfer.Protocol.ApiError(
                     "DEVICE_NOT_AUTHORIZED", "Device is not authorized.", false, context.TraceIdentifier), context.RequestAborted);
                 return;
             }
+            onAuthorizedRequest?.Invoke(device);
             await next(context);
         });
         app.MapServerEndpoints();
