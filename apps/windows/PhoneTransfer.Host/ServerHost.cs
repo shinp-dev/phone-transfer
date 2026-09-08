@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using PhoneTransfer.Api;
 using PhoneTransfer.Application;
 using PhoneTransfer.Application.Files;
+using PhoneTransfer.Application.Text;
 using PhoneTransfer.Domain;
 
 namespace PhoneTransfer.Host;
@@ -22,7 +23,8 @@ public static class ServerHost
     // No development HTTP listener or accept-any certificate fallback.
     public static WebApplication Create(IServerIdentity identity, X509Certificate2 serverCertificate,
         Func<X509Certificate2, PairedDevice?> authorize, IPAddress address, int port,
-        Action<PairedDevice>? onAuthorizedRequest = null, IFileTransferService? fileTransfer = null)
+        Action<PairedDevice>? onAuthorizedRequest = null, IFileTransferService? fileTransfer = null,
+        TextMessageService? textMessages = null)
     {
         var requestConcurrency = new AuthenticatedRequestConcurrency(MaximumConcurrentRequestsPerDevice);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
@@ -81,7 +83,7 @@ public static class ServerHost
                 requestConcurrency.Exit(device.DeviceId);
             }
         });
-        app.MapServerEndpoints(fileTransfer);
+        app.MapServerEndpoints(fileTransfer, textMessages);
         return app;
     }
 }

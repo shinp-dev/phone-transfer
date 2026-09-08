@@ -25,6 +25,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.shinpstudio.phonetransfer.BuildConfig
+import com.shinpstudio.phonetransfer.domain.TextMessageRules
 import com.shinpstudio.phonetransfer.protocol.FileEntry
 import com.shinpstudio.phonetransfer.transfer.TransferKind
 import com.shinpstudio.phonetransfer.transfer.TransferServiceState
@@ -33,6 +34,7 @@ import com.shinpstudio.phonetransfer.transfer.TransferServiceState
 fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var payload by remember { mutableStateOf("") }
+    var outgoingText by remember { mutableStateOf("") }
     var pendingDownload by remember { mutableStateOf<FileEntry?>(null) }
     val scanner =
         rememberLauncherForActivityResult(ScanContract()) { result ->
@@ -56,6 +58,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             transfer is TransferServiceState.Resumable ||
             transfer is TransferServiceState.RecoveryBlocked
     val interactive = !state.busy && !transferBlocking
+    val textInteractive = !state.busy && state.activePcId != null
 
     Column(
         modifier =
@@ -112,7 +115,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 enabled = interactive,
                 onClick = { viewModel.connect(pc) }
             ) {
-                Text("接続してファイルを見る")
+                Text("接続してPCを開く")
             }
             TextButton(
                 enabled = interactive,
@@ -120,6 +123,37 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             ) {
                 Text("このスマホから登録を削除")
             }
+        }
+
+        if (state.activePcId != null) {
+            Text("PCへテキスト / URLを送る", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                value = outgoingText,
+                onValueChange = {
+                    if (it.length <= TextMessageRules.MAX_CONTENT_LENGTH) outgoingText = it
+                },
+                enabled = textInteractive,
+                label = { Text("送信する内容") }
+            )
+            Button(
+                enabled = textInteractive && outgoingText.isNotEmpty(),
+                onClick = { viewModel.sendText(TextMessageRules.PLAIN_TEXT, outgoingText) }
+            ) {
+                Text("テキストとしてPCへ送る")
+            }
+            Button(
+                enabled = textInteractive && TextMessageRules.isHttpUrl(outgoingText),
+                onClick = { viewModel.sendText(TextMessageRules.URL, outgoingText) }
+            ) {
+                Text("URLとしてPCへ送る")
+            }
+            TextButton(
+                enabled = textInteractive && outgoingText.isNotEmpty(),
+                onClick = { outgoingText = "" }
+            ) {
+                Text("入力を消す")
+            }
+            Text("URLはPC側で自動的には開きません。PCで「URLを開く」を押した場合だけブラウザーを起動します。")
         }
 
         state.share?.let { share ->

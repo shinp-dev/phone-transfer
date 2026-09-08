@@ -1,7 +1,11 @@
+using System.ComponentModel;
 using System.Data.Common;
+using System.Diagnostics;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using PhoneTransfer.Application.Text;
 using PhoneTransfer.Domain;
 using PhoneTransfer.Host;
 
@@ -19,12 +23,30 @@ internal sealed class ServerWindow : Form
     private readonly Button pair = new() { Text = "スマホを登録", AutoSize = true, Enabled = false };
     private readonly Button revoke = new() { Text = "選択したスマホの登録を解除", AutoSize = true, Enabled = false };
     private readonly ListBox devices = new() { Dock = DockStyle.Fill, DisplayMember = "DisplayName" };
-    private readonly Label shareStatus = new() { AutoSize = true, MaximumSize = new Size(560, 0) };
+    private readonly Label shareStatus = new() { AutoSize = true, MaximumSize = new Size(640, 0) };
     private readonly Button chooseShare = new() { Text = "受信フォルダを選択", AutoSize = true };
     private readonly Button clearShare = new() { Text = "受信フォルダ設定を解除", AutoSize = true, Enabled = false };
+    private readonly Label receivedTextStatus = new()
+    {
+        Text = "スマホから受信したテキスト/URL: まだありません",
+        AutoSize = true,
+        MaximumSize = new Size(640, 0)
+    };
+    private readonly TextBox receivedText = new()
+    {
+        ReadOnly = true,
+        Multiline = true,
+        ScrollBars = ScrollBars.Vertical,
+        Dock = DockStyle.Fill
+    };
+    private readonly Button copyReceivedText = new() { Text = "コピー", AutoSize = true, Enabled = false };
+    private readonly Button openReceivedUrl = new() { Text = "URLを開く", AutoSize = true, Enabled = false };
+    private ReceivedTextMessage? latestText;
     private bool closing;
     private bool starting;
     private bool resourcesDisposed;
+
+    public event Action? TextReceived;
 
     public ServerWindow()
     {
@@ -32,15 +54,18 @@ internal sealed class ServerWindow : Form
         shareConfiguration = new WindowsShareConfiguration(dataDirectory);
 
         Text = "Phone Transfer";
-        ClientSize = new Size(620, 440);
-        MinimumSize = new Size(520, 400);
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), RowCount = 8, ColumnCount = 1 };
+        ClientSize = new Size(700, 650);
+        MinimumSize = new Size(560, 520);
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), RowCount = 11, ColumnCount = 1 };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.Controls.Add(status, 0, 0);
@@ -54,11 +79,16 @@ internal sealed class ServerWindow : Form
         var shareActions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
         shareActions.Controls.AddRange([chooseShare, clearShare]);
         layout.Controls.Add(shareActions, 0, 6);
+        layout.Controls.Add(receivedTextStatus, 0, 7);
+        layout.Controls.Add(receivedText, 0, 8);
+        var textActions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
+        textActions.Controls.AddRange([copyReceivedText, openReceivedUrl]);
+        layout.Controls.Add(textActions, 0, 9);
         layout.Controls.Add(new Label
         {
             AutoSize = true,
-            Text = "ペアリング済み端末向けの基本ファイル転送APIは有効です。AndroidのSAF転送UIは開発中です。\n閉じるとトレイで待機します。 App 0.1.0 / Build 1 / Protocol 1"
-        }, 0, 7);
+            Text = "ファイル転送とAndroid→PCのテキスト/URL送信APIは有効です。\n閉じるとトレイで待機します。 App 0.1.0 / Build 1 / Protocol 1"
+        }, 0, 10);
         Controls.Add(layout);
         Shown += async (_, _) =>
         {
@@ -68,6 +98,8 @@ internal sealed class ServerWindow : Form
         reconnect.Click += async (_, _) => await StartAsync();
         chooseShare.Click += (_, _) => ChooseShare();
         clearShare.Click += (_, _) => ClearShare();
+        copyReceivedText.Click += (_, _) => CopyLatestText();
+        openReceivedUrl.Click += (_, _) => OpenLatestUrl();
         pair.Click += async (_, _) =>
         {
             if (runtime is null) return;
@@ -193,7 +225,7 @@ internal sealed class ServerWindow : Form
                 status.Text = "LANに接続されていません。Wi-Fiまたは有線LANを接続してください。";
                 return;
             }
-            var started = await WindowsServerRuntime.StartAsync(dataDirectory, adapter.Address, lifetime.Token);
+            var started = await WindowsServerRuntime.StartAsync(dataDirectory, adapter.Address, lifetime.Token, HandleTextReceived);
             if (closing || IsDisposed) { await started.DisposeAsync(); return; }
             runtime = started;
             status.Text = started.MdnsAvailable
@@ -209,6 +241,68 @@ internal sealed class ServerWindow : Form
             status.Text = "起動できませんでした。LAN接続・PCの保存先・ほかの起動中アプリを確認してください。";
         }
         finally { starting = false; if (!IsDisposed && !closing) reconnect.Enabled = true; }
+    }
+
+    private void HandleTextReceived(ReceivedTextMessage message)
+    {
+        if (closing || IsDisposed || !IsHandleCreated) return;
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(new Action(() => HandleTextReceived(message))); }
+            catch (InvalidOperationException) { }
+            return;
+        }
+
+        latestText = message;
+        var kind = message.Entry.Kind == "url" ? "URL" : "テキスト";
+        receivedTextStatus.Text = $"{message.SourceDisplayName} から{kind}を受信しました";
+        receivedText.Text = message.Entry.Content;
+        copyReceivedText.Enabled = true;
+        openReceivedUrl.Enabled = message.Entry.Kind == "url" && TryGetSafeUrl(message.Entry.Content, out _);
+        TextReceived?.Invoke();
+    }
+
+    private void CopyLatestText()
+    {
+        var content = latestText?.Entry.Content;
+        if (string.IsNullOrEmpty(content)) return;
+        try
+        {
+            Clipboard.SetText(content);
+            status.Text = "受信した内容をクリップボードへコピーしました。";
+        }
+        catch (ExternalException)
+        {
+            status.Text = "クリップボードを使用できませんでした。もう一度お試しください。";
+        }
+    }
+
+    private void OpenLatestUrl()
+    {
+        var content = latestText?.Entry.Content;
+        if (content is null || !TryGetSafeUrl(content, out var uri)) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+        {
+            status.Text = "URLを開けませんでした。既定のブラウザー設定を確認してください。";
+        }
+    }
+
+    private static bool TryGetSafeUrl(string content, out Uri uri)
+    {
+        if (Uri.TryCreate(content, UriKind.Absolute, out var candidate) &&
+            (candidate.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase) ||
+             candidate.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)) &&
+            !string.IsNullOrWhiteSpace(candidate.Host) && string.IsNullOrEmpty(candidate.UserInfo))
+        {
+            uri = candidate;
+            return true;
+        }
+        uri = null!;
+        return false;
     }
 
     private async Task RefreshDevicesAsync()
