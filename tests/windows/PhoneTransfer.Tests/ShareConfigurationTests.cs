@@ -1,9 +1,11 @@
+using System.Runtime.Versioning;
 using System.Text.Json;
 using PhoneTransfer.Host;
 using Xunit;
 
 namespace PhoneTransfer.Tests;
 
+[SupportedOSPlatform("windows")]
 public sealed class ShareConfigurationTests : IDisposable
 {
     private readonly string rootDirectory;
