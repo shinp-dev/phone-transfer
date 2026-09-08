@@ -90,9 +90,9 @@ internal static class WindowsFileNative
     internal static bool IsMissing(IOException exception) =>
         exception.InnerException is Win32Exception { NativeErrorCode: 2 or 3 };
 
-    internal static (string Path, ulong Volume, bool Directory) Inspect(SafeFileHandle handle)
+    internal static (string Path, ulong Volume, bool Directory, long Length, DateTimeOffset ModifiedAt) Inspect(SafeFileHandle handle)
     {
-        var buffer = Marshal.AllocHGlobal(32);
+        var buffer = Marshal.AllocHGlobal(40);
         try
         {
             if (!GetFileInformationByHandleEx(handle, 9, buffer, 8)) throw Error(Marshal.GetLastWin32Error());
@@ -100,16 +100,19 @@ internal static class WindowsFileNative
             if ((attributes & 0x400) != 0) throw new IOException("REPARSE_POINT_REJECTED");
             var directory = (attributes & 0x10) != 0;
             if (!GetFileInformationByHandleEx(handle, 1, buffer, 24)) throw Error(Marshal.GetLastWin32Error());
+            var length = directory ? 0 : Marshal.ReadInt64(buffer, 8);
             // Reject preexisting hard links as well as pending deletion. File writes/deletes are not shared.
             if (Marshal.ReadByte(buffer, 20) != 0 || (!directory && Marshal.ReadInt32(buffer, 16) != 1))
                 throw new IOException("UNSTABLE_FILE_REJECTED");
+            if (!GetFileInformationByHandleEx(handle, 0, buffer, 40)) throw Error(Marshal.GetLastWin32Error());
+            var modifiedAt = DateTimeOffset.FromFileTime(Marshal.ReadInt64(buffer, 16));
             if (!GetFileInformationByHandleEx(handle, 18, buffer, 24)) throw Error(Marshal.GetLastWin32Error());
             var volume = unchecked((ulong)Marshal.ReadInt64(buffer));
             var path = new StringBuilder(32768);
-            var length = GetFinalPathNameByHandleW(handle, path, (uint)path.Capacity, 1); // VOLUME_NAME_GUID, normalized
-            if (length == 0) throw Error(Marshal.GetLastWin32Error());
-            if (length >= path.Capacity) throw new IOException("FINAL_PATH_TOO_LONG");
-            return (path.ToString(), volume, directory);
+            var pathLength = GetFinalPathNameByHandleW(handle, path, (uint)path.Capacity, 1); // VOLUME_NAME_GUID, normalized
+            if (pathLength == 0) throw Error(Marshal.GetLastWin32Error());
+            if (pathLength >= path.Capacity) throw new IOException("FINAL_PATH_TOO_LONG");
+            return (path.ToString(), volume, directory, length, modifiedAt);
         }
         finally { Marshal.FreeHGlobal(buffer); }
     }

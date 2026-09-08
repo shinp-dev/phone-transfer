@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PhoneTransfer.Api;
 using PhoneTransfer.Application;
+using PhoneTransfer.Application.Files;
 using PhoneTransfer.Domain;
 
 namespace PhoneTransfer.Host;
@@ -18,7 +19,7 @@ public static class ServerHost
     // No development HTTP listener or accept-any certificate fallback.
     public static WebApplication Create(IServerIdentity identity, X509Certificate2 serverCertificate,
         Func<X509Certificate2, PairedDevice?> authorize, IPAddress address, int port,
-        Action<PairedDevice>? onAuthorizedRequest = null)
+        Action<PairedDevice>? onAuthorizedRequest = null, BasicFileTransferService? fileTransfer = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
         builder.Logging.ClearProviders();
@@ -30,7 +31,8 @@ public static class ServerHost
         });
         builder.WebHost.ConfigureKestrel(options =>
         {
-            options.Limits.MaxRequestBodySize = 4 * 1024 * 1024;
+            // One extra byte lets the file API return a typed 413 for a 4 MiB + 1 chunk.
+            options.Limits.MaxRequestBodySize = TransferOffset.MaximumChunkBytes + 1L;
             options.Listen(address, port, listen => listen.UseHttps(https =>
             {
                 https.ServerCertificate = serverCertificate;
@@ -53,10 +55,11 @@ public static class ServerHost
                     "DEVICE_NOT_AUTHORIZED", "Device is not authorized.", false, context.TraceIdentifier), context.RequestAborted);
                 return;
             }
+            context.Items[typeof(PairedDevice)] = device;
             onAuthorizedRequest?.Invoke(device);
             await next(context);
         });
-        app.MapServerEndpoints();
+        app.MapServerEndpoints(fileTransfer);
         return app;
     }
 }

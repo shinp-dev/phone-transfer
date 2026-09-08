@@ -4,11 +4,13 @@ using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Builder;
+using PhoneTransfer.Application.Files;
 using PhoneTransfer.Application.Pairing;
 using PhoneTransfer.Domain;
 using PhoneTransfer.Infrastructure.Discovery;
 using PhoneTransfer.Infrastructure.Persistence;
 using PhoneTransfer.Infrastructure.Security;
+using PhoneTransfer.Infrastructure.Storage;
 using PhoneTransfer.Protocol;
 
 namespace PhoneTransfer.Host;
@@ -25,6 +27,7 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
     private readonly IPAddress address;
     private readonly WebApplication bootstrap;
     private readonly WebApplication api;
+    private readonly BasicFileTransferService fileTransfers;
     private WindowsMdnsAdvertiser? mdns;
     public PairingCoordinator Pairing { get; }
     public bool MdnsAvailable => mdns is not null;
@@ -37,8 +40,10 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         certificate = new WindowsServerCertificate().GetOrCreate(identity.DeviceId);
         Pairing = new PairingCoordinator(devices, TimeProvider.System);
         bootstrap = PairingHost.Create(Pairing, certificate, address, BootstrapPort);
+        var shareConfigurations = new WindowsShareConfigurationStore(directory);
+        fileTransfers = new BasicFileTransferService(shareConfigurations, new WindowsShareFileSystem());
         api = ServerHost.Create(identity, certificate, devices.Authorize, address, ApiPort,
-            device => devices.TryTouchLastSeen(device));
+            device => devices.TryTouchLastSeen(device), fileTransfers);
     }
 
     public static async Task<WindowsServerRuntime> StartAsync(string directory, IPAddress address, CancellationToken token)
@@ -135,7 +140,11 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
                 try { await bootstrap.DisposeAsync().ConfigureAwait(false); }
                 finally { await api.DisposeAsync().ConfigureAwait(false); }
             }
-            finally { certificate.Dispose(); }
+            finally
+            {
+                fileTransfers.Dispose();
+                certificate.Dispose();
+            }
         }
     }
 }
