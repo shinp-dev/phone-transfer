@@ -1,186 +1,131 @@
-# 開発引き継ぎ — durable recovery + Android→PC text/URL
+# Development handoff — physical acceptance gate
 
-更新日: 2026-09-09
+Updated: 2026-09-09 JST
 
-## 現在地
+## Current state
 
-- リポジトリ: `shinp-dev/phone-transfer`
+- Repository: `shinp-dev/phone-transfer`
+- Audited main: `7c5f85f1c09215d0da24e8d9efe338754a4b17de`
 - PR #11: Windows durable transfer recovery — merged
 - PR #12: Android process-kill durable upload recovery — merged
-- PR #13: durable recovery merge後のREADME/status/handoff現行化 — merged
-- PR #14: Android → PC text/URL — 実装・CI調整中
-- コアfile-transferは大きく揃っているが、physical-device acceptance未完了のためMVP完成とは扱わない。
+- PR #13: documentation/status refresh — merged
+- PR #14: Android -> PC text/URL — merged
+- Main post-merge CI #242: Protocol / Windows / Android all green
+- Final code/feature audit: no Critical, High or merge-blocking Medium in the code-auditable current production paths
+- **Next gate: real Windows 11 + Android physical-device acceptance**
 
-既にmerge済みのPR #11/#12 branchを新しい実装の土台として再利用しない。各作業は最新`main`から新branchを切る。
+Do not reuse old merged feature branches for fixes. Any physical finding should start from the then-current `main` in a new branch/PR.
 
-## mainで確立済みの主要境界
+## What is implemented
 
-### Pairing / identity / discovery
+### Pairing and trust
 
-- Windowsは120秒single-use QR challengeを発行し、比較番号をPC側で承認。
-- Android client identityはKeystore、Windows server identityはcurrent-user non-exportable CNG key。
-- 登録後APIはmTLS。Windowsはpaired-device revocationをrequestごとに再確認。
-- mDNS/NSDはrouting metadataのみで、endpoint変更はSPKI pin/client identity/Device ID検証後に保存。
+- single-use 120-second QR challenge;
+- proof-of-possession and explicit PC comparison-code approval;
+- Android Keystore client identity;
+- Windows non-exportable current-user CNG server key;
+- QR-originated SPKI pin;
+- authenticated mTLS API;
+- request-by-request paired-device revocation checks;
+- mDNS/NSD endpoint rediscovery followed by identity re-verification.
 
-### Windows handle-safe filesystem
+### File transfer and containment
 
-- 受信rootはローカルNTFS/ReFSのみ。
-- traversalはretained directory handle基準。
-- junction/symlink/reparse point/hardlink/replacement race/unsafe mount transitionはfail closed。
-- private staging + same-volume no-overwrite rename。
-- physical root pathをwireへ出さない。
+- configurable local NTFS/ReFS Windows share;
+- retained-handle Windows traversal with reparse/junction/symlink/hardlink/race fail-closed behavior;
+- private staging and no-overwrite commit;
+- Android SAF upload/download;
+- non-exported `dataSync` Foreground Service;
+- bounded/authenticated file APIs.
 
-### Windows durable upload authority
+### Durable upload recovery
 
-- server upload progressのauthorityはWindows SQLite journal。
-- `write → FlushToDisk → journal commit → response`。
-- ambiguous DB commitではfileを勝手にrollbackせずstartup reconciliationへ委ねる。
-- renameがfile commit point。
-- rename後journal gapはdestination identity/volume/size/SHA-256を証明できる場合だけCompletedへ収束。
-- cancel terminal commitがcleanupより先、device revokeがtransfer cleanupより先。
-- shareはpersisted opaque generationで識別し、old rootをpath文字列から再探索しない。
+Windows durable SQLite state is server-side authority. Android durable state is a local operation/capability/reconciliation record, not a competing server-progress authority.
 
-詳細: [Windows durable recovery](architecture/durable-transfer-recovery.md)
+Important invariants already implemented:
 
-### Android durable upload recovery
+- client idempotency/source identity exists durably before create;
+- server ACK precedes local observed-offset checkpoint;
+- Windows writes/flushes before durable committed offset advances;
+- server-ahead/local-behind can converge; server-behind/local-ahead fails closed;
+- upload resume requires real SAF grant, PC reauthentication and source full hash;
+- Completed can converge without reopening Android source;
+- user cancel intent is durable before remote cancel and cannot be cleared by stale writers;
+- server Completed wins cancel/completion race;
+- corrupt Android recovery data blocks new transfer;
+- process-killed download never resumes to the same generic SAF destination.
 
-- local journalはserver progress authorityではなくrecovery capability/intent。
-- stable operation/idempotency keyとsource identityをserver create前にdurable化。
-- server transfer ID/offsetはserver observation後にmonotonic checkpoint。
-- actual `persistedUriPermissions`をSAF capability authorityとして確認。
-- resume前にsaved PC identityをpinned TLS/client identity + `/api/v1/info`で再検証。
-- more bytes前にsource full hashを再検証。
-- server aheadは採用可能、server behindはfail closed。
-- cancel intentはremote side effectより先にdurable化し、Completedとの競合ではCompleted優先。
-- corrupt/unknown/oversized/multiple journalは新規transferをblock。
-- interrupted downloadは同じgeneric SAF destinationへprocess-kill resumeしない。
+### Android -> PC text / URL
 
-詳細: [Android durable recovery](architecture/android-durable-transfer-recovery.md)
+- `plainText` / `url` through existing mTLS `POST /api/v1/text`;
+- `TextSend` permission;
+- bounded body/content;
+- HTTP/HTTPS-only URL validation and no embedded credentials;
+- same-key transport retry and bounded runtime duplicate-presentation suppression;
+- Windows latest-message display/copy;
+- generic tray notification;
+- URL opens only by explicit PC user action.
 
-## PR #14 — Android → PC text / URL
+## Final audit references
 
-既存Protocol v1の拡張性を維持し、実装方向だけAndroid → PCに限定する。
-
-実装境界:
-
-- `POST /api/v1/text`を既存mTLS listenerへ追加。
-- `TextSend` permissionをWindowsで強制。
-- `plainText` / `url` kindを維持。
-- content上限65,536、JSON body上限128KiB。
-- URL kindはabsolute http/httpsのみ。embedded credentialsを拒否。
-- AndroidはSPKI pin + Keystore client identityでPOST。
-- raw transport failure時のみ同じidempotency keyで1回retry。
-- Windowsはactive runtime内でbounded per-device idempotency windowを持ち、同一key/payloadのretryではUI通知を重複させない。key再利用でpayloadが変われば`IDEMPOTENCY_CONFLICT`。
-- Windows UIは最新受信内容を表示しcopy可能。
-- URLを受信しただけではブラウザーを開かない。PCユーザーが明示ボタンを押した場合のみopen。
-- tray通知には本文を出さず、汎用的な「テキストまたはURLが届いた」通知だけ表示。
-- file transfer pending/recovery stateはtext deliveryのjournalではないため、Androidからのtext送信自体はfile transferと独立して許可。
-
-今回やらないもの:
-
-- PC → Android delivery;
-- Android listener / long-poll;
-- user-visible persistent text history;
-- `GET /api/v1/text/history` product implementation;
-- `ACTION_SEND` / `ACTION_SEND_MULTIPLE` integration。
-
-OpenAPI/generated DTOは既に`SendText`/`TextEntry`/history拡張を表現しているため、PR #14では変更しない。
-
-## PR #14 自動テスト
-
-追加:
-
-- Android `TextMessageRulesTest`
-  - plain text bound;
-  - URL http/https validation;
-  - credentials/relative/non-http scheme拒否;
-  - unknown kind拒否。
-- Windows `TextMessageApiIntegrationTests`
-  - real Kestrel + mTLSでPOST;
-  -同一idempotency key retryが同一`TextEntry`へ収束しpresentationが1回だけ;
-  - same key/different payloadが409;
-  - invalid URLが400;
-  - `TextSend` permission無しで拒否。
-
-既存CI:
-
-```sh
-dotnet format PhoneTransfer.slnx --verify-no-changes
-dotnet build PhoneTransfer.slnx --configuration Release
-dotnet test tests/windows/PhoneTransfer.Tests --configuration Release
-python scripts/validate_protocol.py
-python scripts/generate_protocol.py --check
-git diff --check
-gradle -p apps/android spotlessCheck :protocol:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
-```
-
-CI greenとphysical acceptanceを混同しない。
-
-## 次にやること — 最優先
-
-### 1. PR #14を閉じる
-
-- latest HEADのprotocol / Windows / Android CIを全greenにする。
-- mainとの差分を再監査し、text endpoint以外の認証/transfer authorityを崩していないことを確認。
-- URL auto-openが存在しないこと、tray本文露出がないこと、OpenAPI/generated driftがないことを確認。
-- Ready化までは可。mergeはユーザーの明示指示後のみ。
-
-### 2. Physical-device acceptance checklist
-
-少なくとも前提端末、手順、期待結果、実測結果、証跡を記録できる形にする。
-
-### 3. Android ↔ Windows実機acceptance
-
-ファイル系:
-
-- QR/comparison-code pairing;
-- real Wi-Fi mDNS;
-- mTLS;
-- basic upload/download;
-- seekable / nonseekable-reopenable SAF provider;
-- persistable grant accept/reject;
-- hashing/create/chunk/completed境界のprocess kill;
-- Android process/device reboot;
-- Windows process/PC reboot;
-- Wi-Fi loss/reconnect;
-- screen-off / FGS timeout;
-- multi-GB / disk-full / sleep-resume / NTFS-ReFS / mounted-volume rejection。
-
-text/URL系:
-
-- Android plain text send;
-- http/https URL send;
-- invalid URLが送信UI/serverで拒否される;
-- Windows window表示中の受信;
-- tray-hidden時の汎用通知;
-- copy;
-- URLは受信だけではopenしない;
-- 明示的な「URLを開く」で既定browserを起動;
-- 一時的なnetwork failure後のretryで同一runtime内duplicate presentationが発生しない。
-
-## その次の実装
-
-- Windows transfer-journal retention / maintenance;
-- DHCP/Wi-Fi adapter変更時のauto-rebind;
-- entry-list pagination;
-- Android `ACTION_SEND` / `ACTION_SEND_MULTIPLE`;
-- 必要ならtext history / PC→Android delivery;
-- 必要ならbounded recovery scheduler;
-- branch protection / required CI / state-store ACL統一 / optional Actions SHA pinning。
-
-## 運用上の安全側制限
-
-- Windows transfer journalは4,096 records上限。容量回避のためactive DBを削除しない。
-- cleanupを証明できないtransfer record/stagingは安全側に保持することがある。
-- Android recoveryはuser-driven。unrestricted background resurrectionは実装しない。
-- interrupted download continuationは未実装。
-- text/URLのuser-visible historyは未実装。現在のdedupe windowはprocess-local/boundedで、durable message queueではない。
-
-## 正本
-
+- [Final code / feature audit](final-audit.md)
 - [Implementation status](implementation-status.md)
+- [Physical-device acceptance](physical-device-acceptance.md)
 - [Windows durable recovery](architecture/durable-transfer-recovery.md)
 - [Android durable recovery](architecture/android-durable-transfer-recovery.md)
-- [Protocol v1](protocol/v1.md)
 - [Threat model](security/threat-model.md)
-- [ADR](decisions/)
+
+## Next work order
+
+### 1. Run the minimum physical acceptance flow
+
+Execute M01–M08 in [physical-device acceptance](physical-device-acceptance.md) and record PASS/FAIL evidence.
+
+This is the first priority. Do not add optional product features before learning whether the real Windows/Android path exposes a correctness problem.
+
+### 2. Fix only demonstrated findings
+
+If an item fails:
+
+1. record exact reproduction, OS/device/provider and expected contract;
+2. create a new branch from latest main;
+3. add the smallest code fix and a regression test when reproducible in automation;
+4. run full CI;
+5. rerun the failed physical case;
+6. update the acceptance table/evidence.
+
+### 3. Run extended physical cases
+
+After M01–M08 pass, prioritize:
+
+- Android device reboot;
+- Windows PC reboot and sleep/resume;
+- screen-off / notification permission / FGS timeout;
+- persistable-grant accept/reject providers;
+- nonseekable but reopenable provider;
+- multi-GB / 4 GiB+ where feasible;
+- disk full;
+- NTFS/ReFS and mounted-volume rejection;
+- active device revoke;
+- DHCP/Wi-Fi adapter change with current manual-reconnect expectation.
+
+### 4. Post-MVP optional increments
+
+- transfer-journal retention/maintenance;
+- auto-rebind after adapter/DHCP change;
+- entry pagination;
+- ACTION_SEND / ACTION_SEND_MULTIPLE;
+- optional text history / PC -> Android delivery;
+- optional bounded unattended recovery;
+- protected main / required checks / immutable Action SHA pinning;
+- public release packaging/signing/installer work;
+- cleanup/isolation of no-longer-production process-local upload helpers.
+
+## Safety / scope reminders
+
+- CI green is not physical acceptance.
+- Never weaken handle-safe containment or durable ordering to make a physical failure disappear.
+- Do not delete `transfers.db` merely to recover capacity; retention needs a separate idempotency/recovery-safe design.
+- Do not claim interrupted-download continuation; restart with a new destination is intentional.
+- Text duplicate suppression is process-local/bounded, not durable history/queue semantics.
+- Do not log or publish pairing tokens, certificate material, SAF URIs or sensitive filenames while collecting test evidence.
