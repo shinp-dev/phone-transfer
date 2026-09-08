@@ -19,6 +19,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Visible = true
         };
         icon.DoubleClick += (_, _) => { window.Show(); window.Activate(); };
+        icon.BalloonTipClicked += (_, _) => { window.Show(); window.Activate(); };
+        window.TextReceived += () =>
+        {
+            icon.BalloonTipTitle = "Phone Transfer";
+            icon.BalloonTipText = "スマホからテキストまたはURLが届きました。";
+            icon.ShowBalloonTip(5000);
+        };
         window.Show();
     }
 

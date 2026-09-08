@@ -12,8 +12,10 @@ import com.shinpstudio.phonetransfer.data.NsdDiscovery
 import com.shinpstudio.phonetransfer.data.PairingRepository
 import com.shinpstudio.phonetransfer.data.PersistedTransferOperation
 import com.shinpstudio.phonetransfer.data.SavedPc
+import com.shinpstudio.phonetransfer.data.TextMessageRepository
 import com.shinpstudio.phonetransfer.data.TransferOperationStore
 import com.shinpstudio.phonetransfer.domain.RemotePathRules
+import com.shinpstudio.phonetransfer.domain.TextMessageRules
 import com.shinpstudio.phonetransfer.protocol.FileEntry
 import com.shinpstudio.phonetransfer.protocol.Share
 import com.shinpstudio.phonetransfer.transfer.FileTransferService
@@ -46,6 +48,7 @@ data class HomeState(
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = PairingRepository(application)
     private val fileRepository = FileTransferRepository(application)
+    private val textRepository = TextMessageRepository(application)
     private val discovery = NsdDiscovery(application)
     private val transferOperations = TransferOperationStore.get(application)
     private val mutableState = MutableStateFlow(HomeState())
@@ -147,6 +150,22 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun connect(pc: SavedPc) = runOperation {
         repository.connect(pc)
         loadRemote(pc, "")
+    }
+
+    fun sendText(kind: String, content: String) = runOperation(blockWhenTransferPending = false) {
+        TextMessageRules.validate(kind, content)
+        val pc = activePc() ?: error("PC_NOT_CONNECTED")
+        textRepository.send(pc, kind, content)
+        mutableState.update {
+            it.copy(
+                connectionLabel =
+                if (kind == TextMessageRules.URL) {
+                    "PCへURLを送りました"
+                } else {
+                    "PCへテキストを送りました"
+                }
+            )
+        }
     }
 
     fun refreshFiles() = runOperation {
@@ -379,10 +398,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         return repository.saved().firstOrNull { it.deviceId == id }
     }
 
-    private fun runOperation(block: suspend () -> Unit) {
+    private fun runOperation(blockWhenTransferPending: Boolean = true, block: suspend () -> Unit) {
         if (
             operation?.isCompleted == false ||
-            state.value.transfer.blocksNewTransfer()
+            (blockWhenTransferPending && state.value.transfer.blocksNewTransfer())
         ) {
             return
         }
@@ -403,7 +422,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (error: FileTransferException) {
                     mutableState.update {
                         it.copy(
-                            connectionLabel = "PCのファイル操作に失敗しました (${error.code})"
+                            connectionLabel = "PCとの操作に失敗しました (${error.code})"
                         )
                     }
                 } catch (_: Exception) {

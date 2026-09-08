@@ -6,6 +6,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Builder;
 using PhoneTransfer.Application.Files;
 using PhoneTransfer.Application.Pairing;
+using PhoneTransfer.Application.Text;
 using PhoneTransfer.Domain;
 using PhoneTransfer.Infrastructure.Discovery;
 using PhoneTransfer.Infrastructure.Persistence;
@@ -28,11 +29,12 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
     private readonly WebApplication bootstrap;
     private readonly WebApplication api;
     private readonly DurableFileTransferService fileTransfers;
+    private readonly TextMessageService textMessages;
     private WindowsMdnsAdvertiser? mdns;
     public PairingCoordinator Pairing { get; }
     public bool MdnsAvailable => mdns is not null;
 
-    private WindowsServerRuntime(string directory, IPAddress address)
+    private WindowsServerRuntime(string directory, IPAddress address, Action<ReceivedTextMessage>? onTextReceived)
     {
         this.address = address;
         identity = new DeviceIdentityFile(directory);
@@ -40,6 +42,7 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         certificate = new WindowsServerCertificate().GetOrCreate(identity.DeviceId);
         Pairing = new PairingCoordinator(devices, TimeProvider.System);
         bootstrap = PairingHost.Create(Pairing, certificate, address, BootstrapPort);
+        textMessages = new TextMessageService(onTextReceived);
         SqliteTransferJournal? journal = null;
         DurableFileTransferService? transfers = null;
         try
@@ -51,7 +54,7 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
                 id => devices.List().FirstOrDefault(device => device.DeviceId == id));
             fileTransfers = transfers;
             api = ServerHost.Create(identity, certificate, devices.Authorize, address, ApiPort,
-                device => devices.TryTouchLastSeen(device), fileTransfers);
+                device => devices.TryTouchLastSeen(device), fileTransfers, textMessages);
         }
         catch
         {
@@ -63,9 +66,10 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         }
     }
 
-    public static async Task<WindowsServerRuntime> StartAsync(string directory, IPAddress address, CancellationToken token)
+    public static async Task<WindowsServerRuntime> StartAsync(string directory, IPAddress address, CancellationToken token,
+        Action<ReceivedTextMessage>? onTextReceived = null)
     {
-        var runtime = new WindowsServerRuntime(directory, address);
+        var runtime = new WindowsServerRuntime(directory, address, onTextReceived);
         try
         {
             runtime.fileTransfers.Initialize();
