@@ -34,7 +34,7 @@ public sealed class BasicFileTransferException : Exception
     public bool Retryable { get; }
 }
 
-public sealed class BasicFileTransferService : IDisposable
+public sealed class BasicFileTransferService : IFileTransferService
 {
     public const long MaximumFileBytes = 1_099_511_627_776;
     private const long MaximumActiveStagingBytes = 256L * 1024 * 1024 * 1024;

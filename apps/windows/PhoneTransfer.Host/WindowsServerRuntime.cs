@@ -27,7 +27,7 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
     private readonly IPAddress address;
     private readonly WebApplication bootstrap;
     private readonly WebApplication api;
-    private readonly BasicFileTransferService fileTransfers;
+    private readonly DurableFileTransferService fileTransfers;
     private WindowsMdnsAdvertiser? mdns;
     public PairingCoordinator Pairing { get; }
     public bool MdnsAvailable => mdns is not null;
@@ -41,7 +41,10 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         Pairing = new PairingCoordinator(devices, TimeProvider.System);
         bootstrap = PairingHost.Create(Pairing, certificate, address, BootstrapPort);
         var shareConfigurations = new WindowsShareConfigurationStore(directory);
-        fileTransfers = new BasicFileTransferService(shareConfigurations, new WindowsShareFileSystem());
+        var fileSystem = new WindowsShareFileSystem();
+        var journal = new SqliteTransferJournal(Path.Combine(directory, "transfers.db"));
+        fileTransfers = new DurableFileTransferService(shareConfigurations, fileSystem, fileSystem, journal,
+            id => devices.List().FirstOrDefault(device => device.DeviceId == id));
         api = ServerHost.Create(identity, certificate, devices.Authorize, address, ApiPort,
             device => devices.TryTouchLastSeen(device), fileTransfers);
     }
@@ -51,6 +54,7 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         var runtime = new WindowsServerRuntime(directory, address);
         try
         {
+            runtime.fileTransfers.Initialize();
             await runtime.api.StartAsync(token).ConfigureAwait(false);
             await runtime.bootstrap.StartAsync(token).ConfigureAwait(false);
             await runtime.StartMdnsAsync(token).ConfigureAwait(false);
@@ -118,18 +122,7 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
 
     public Task<bool> RevokeAsync(Guid id) => Task.Run(() =>
     {
-        var revoked = devices.Revoke(id);
-        if (!revoked) return false;
-        try
-        {
-            fileTransfers.CancelDevice(id);
-        }
-        catch (IOException)
-        {
-            // Revocation is authoritative even if best-effort staging deletion reports an OS cleanup failure.
-            // The request-by-request registry check denies further access immediately.
-        }
-        return true;
+        return fileTransfers.RevokeDevice(id, () => devices.Revoke(id));
     });
 
     public async ValueTask DisposeAsync()

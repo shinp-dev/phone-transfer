@@ -21,7 +21,7 @@ public static class FileTransferEndpoints
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
 
-    public static void MapFileTransferEndpoints(this IEndpointRouteBuilder endpoints, BasicFileTransferService service)
+    public static void MapFileTransferEndpoints(this IEndpointRouteBuilder endpoints, IFileTransferService service)
     {
         ArgumentNullException.ThrowIfNull(service);
         endpoints.MapGet("/api/v1/shares", (HttpContext context) => ListShares(context, service));
@@ -35,7 +35,7 @@ public static class FileTransferEndpoints
         endpoints.MapGet("/api/v1/shares/{shareId}/content", (HttpContext context) => DownloadAsync(context, service));
     }
 
-    private static IResult ListShares(HttpContext context, BasicFileTransferService service) => Execute(context, () =>
+    private static IResult ListShares(HttpContext context, IFileTransferService service) => Execute(context, () =>
     {
         var items = service.ListShares(Device(context))
             .Select(item => new Share(item.Id.ToString("D"), item.Name, item.Writable))
@@ -43,7 +43,7 @@ public static class FileTransferEndpoints
         return Results.Ok(new ShareList(items));
     });
 
-    private static IResult ListEntries(HttpContext context, BasicFileTransferService service) => Execute(context, () =>
+    private static IResult ListEntries(HttpContext context, IFileTransferService service) => Execute(context, () =>
     {
         var shareId = RouteGuid(context, "shareId", "INVALID_SHARE_ID");
         if (!context.Request.Query.ContainsKey("path"))
@@ -63,7 +63,7 @@ public static class FileTransferEndpoints
         return Results.Ok(new FileList(items, string.Empty));
     });
 
-    private static async Task<IResult> CreateTransferAsync(HttpContext context, BasicFileTransferService service)
+    private static async Task<IResult> CreateTransferAsync(HttpContext context, IFileTransferService service)
     {
         try
         {
@@ -94,16 +94,16 @@ public static class FileTransferEndpoints
         }
     }
 
-    private static IResult GetTransfer(HttpContext context, BasicFileTransferService service) => Execute(context, () =>
+    private static IResult GetTransfer(HttpContext context, IFileTransferService service) => Execute(context, () =>
         Results.Ok(ToTransfer(service.GetTransfer(Device(context), RouteGuid(context, "transferId", "INVALID_TRANSFER_ID")))));
 
-    private static IResult CancelTransfer(HttpContext context, BasicFileTransferService service) => Execute(context, () =>
+    private static IResult CancelTransfer(HttpContext context, IFileTransferService service) => Execute(context, () =>
         Results.Ok(ToTransfer(service.Cancel(Device(context), RouteGuid(context, "transferId", "INVALID_TRANSFER_ID")))));
 
-    private static IResult CompleteTransfer(HttpContext context, BasicFileTransferService service) => Execute(context, () =>
+    private static IResult CompleteTransfer(HttpContext context, IFileTransferService service) => Execute(context, () =>
         Results.Ok(ToTransfer(service.Complete(Device(context), RouteGuid(context, "transferId", "INVALID_TRANSFER_ID")))));
 
-    private static async Task<IResult> AppendChunkAsync(HttpContext context, BasicFileTransferService service)
+    private static async Task<IResult> AppendChunkAsync(HttpContext context, IFileTransferService service)
     {
         try
         {
@@ -125,7 +125,7 @@ public static class FileTransferEndpoints
         }
     }
 
-    private static async Task DownloadAsync(HttpContext context, BasicFileTransferService service)
+    private static async Task DownloadAsync(HttpContext context, IFileTransferService service)
     {
         DownloadLease? lease = null;
         try
@@ -286,6 +286,7 @@ public static class FileTransferEndpoints
         var status = forcedStatus ?? code switch
         {
             "PERMISSION_DENIED" => StatusCodes.Status403Forbidden,
+            "TRANSFER_SERVICE_UNAVAILABLE" or "TRANSFER_JOURNAL_UNAVAILABLE" => StatusCodes.Status503ServiceUnavailable,
             "SHARE_NOT_CONFIGURED" or "SHARE_NOT_FOUND" or "TRANSFER_NOT_FOUND" or "PATH_UNAVAILABLE" => StatusCodes.Status404NotFound,
             "REQUEST_TOO_LARGE" => StatusCodes.Status413PayloadTooLarge,
             "HASH_MISMATCH" => StatusCodes.Status422UnprocessableEntity,

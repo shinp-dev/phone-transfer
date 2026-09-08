@@ -6,7 +6,7 @@ using PhoneTransfer.Domain;
 namespace PhoneTransfer.Infrastructure.Storage;
 
 [SupportedOSPlatform("windows")]
-public sealed class WindowsShareFileSystem : IShareFileSystem
+public sealed partial class WindowsShareFileSystem : IShareFileSystem, IDurableShareFileSystem
 {
     public IShareFileSession Open(ShareConfiguration configuration)
     {
@@ -14,7 +14,7 @@ public sealed class WindowsShareFileSystem : IShareFileSystem
         return new Session(configuration.RootPath);
     }
 
-    private sealed class Session : IShareFileSession
+    private sealed partial class Session : IShareFileSession, IDurableShareSession
     {
         private const string PrivatePrefix = ".phone-transfer-staging-";
         private const int MaxOpenFiles = 64;
@@ -183,6 +183,7 @@ public sealed class WindowsShareFileSystem : IShareFileSystem
                 if (disposed) return;
                 disposed = true;
                 Exception? error = null;
+                foreach (var file in durableFiles.ToArray()) file.Dispose();
                 foreach (var file in files.ToArray())
                 {
                     try { file.Dispose(); }

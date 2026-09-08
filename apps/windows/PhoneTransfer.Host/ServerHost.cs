@@ -22,7 +22,7 @@ public static class ServerHost
     // No development HTTP listener or accept-any certificate fallback.
     public static WebApplication Create(IServerIdentity identity, X509Certificate2 serverCertificate,
         Func<X509Certificate2, PairedDevice?> authorize, IPAddress address, int port,
-        Action<PairedDevice>? onAuthorizedRequest = null, BasicFileTransferService? fileTransfer = null)
+        Action<PairedDevice>? onAuthorizedRequest = null, IFileTransferService? fileTransfer = null)
     {
         var requestConcurrency = new AuthenticatedRequestConcurrency(MaximumConcurrentRequestsPerDevice);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Principal;
+using System.Security.AccessControl;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
@@ -67,7 +68,7 @@ internal static class WindowsFileNative
                 Attributes = 0x1040, // OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE
                 SecurityDescriptor = descriptor
             };
-            var access = ReadAccess | (writable ? 2u : 0) | (delete ? DeleteAccess : 0);
+            var access = ReadAccess | (privateAcl ? 0x00020000u : 0) | (writable ? 2u : 0) | (delete ? DeleteAccess : 0);
             var options = OpenReparsePoint | SynchronousIo | (directory == true ? 1u : directory == false ? 0x40u : 0);
             var status = NtCreateFile(out var result, access, ref attributes, out _, IntPtr.Zero,
                 0x80, directory == true ? 3u : writable || delete ? 0u : 1u, create ? 2u : 1u, options, IntPtr.Zero, 0);
@@ -90,7 +91,7 @@ internal static class WindowsFileNative
     internal static bool IsMissing(IOException exception) =>
         exception.InnerException is Win32Exception { NativeErrorCode: 2 or 3 };
 
-    internal static (string Path, ulong Volume, bool Directory, long Length, DateTimeOffset ModifiedAt) Inspect(SafeFileHandle handle)
+    internal static (string Path, ulong Volume, bool Directory, long Length, DateTimeOffset ModifiedAt, string Identity) Inspect(SafeFileHandle handle)
     {
         var buffer = Marshal.AllocHGlobal(40);
         try
@@ -108,13 +109,37 @@ internal static class WindowsFileNative
             var modifiedAt = DateTimeOffset.FromFileTime(Marshal.ReadInt64(buffer, 16));
             if (!GetFileInformationByHandleEx(handle, 18, buffer, 24)) throw Error(Marshal.GetLastWin32Error());
             var volume = unchecked((ulong)Marshal.ReadInt64(buffer));
+            var fileId = new byte[16];
+            Marshal.Copy(IntPtr.Add(buffer, 8), fileId, 0, fileId.Length);
+            var identity = volume.ToString("x16", System.Globalization.CultureInfo.InvariantCulture) + Convert.ToHexStringLower(fileId);
             var path = new StringBuilder(32768);
             var pathLength = GetFinalPathNameByHandleW(handle, path, (uint)path.Capacity, 1); // VOLUME_NAME_GUID, normalized
             if (pathLength == 0) throw Error(Marshal.GetLastWin32Error());
             if (pathLength >= path.Capacity) throw new IOException("FINAL_PATH_TOO_LONG");
-            return (path.ToString(), volume, directory, length, modifiedAt);
+            return (path.ToString(), volume, directory, length, modifiedAt, identity);
         }
         finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    // Validate an existing object's actual protected owner-only DACL, not a requested creation descriptor.
+    internal static void ValidatePrivateAcl(SafeFileHandle handle)
+    {
+        var result = GetSecurityInfo(handle, 1, 5, out _, out _, out _, out _, out var descriptor);
+        if (result != 0) throw Error(unchecked((int)result));
+        try
+        {
+            var bytes = new byte[GetSecurityDescriptorLength(descriptor)];
+            Marshal.Copy(descriptor, bytes, 0, bytes.Length);
+            var security = new RawSecurityDescriptor(bytes, 0);
+            using var identity = WindowsIdentity.GetCurrent();
+            var sid = identity.User ?? throw new IOException("CURRENT_USER_UNAVAILABLE");
+            if (security.Owner != sid || (security.ControlFlags & ControlFlags.DiscretionaryAclProtected) == 0 ||
+                security.DiscretionaryAcl is not { Count: 1 } acl || acl[0] is not CommonAce ace ||
+                ace.AceQualifier != AceQualifier.AccessAllowed || ace.SecurityIdentifier != sid ||
+                ace.IsCallback || (ace.AceFlags & AceFlags.InheritOnly) != 0 || ace.AccessMask != 0x001f01ff)
+                throw new IOException("PRIVATE_ACL_REJECTED");
+        }
+        finally { LocalFree(descriptor); }
     }
 
     internal static void ValidateVolume(SafeFileHandle handle, string path)
@@ -247,6 +272,11 @@ internal static class WindowsFileNative
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string text, uint revision, out IntPtr descriptor, out uint size);
+    [DllImport("advapi32.dll", ExactSpelling = true)]
+    private static extern uint GetSecurityInfo(SafeFileHandle handle, int objectType, uint securityInformation,
+        out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
+    [DllImport("advapi32.dll", ExactSpelling = true)]
+    private static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
     [DllImport("kernel32.dll", ExactSpelling = true)]
     private static extern IntPtr LocalFree(IntPtr memory);
 }
