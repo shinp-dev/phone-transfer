@@ -228,7 +228,7 @@ class FileTransferService : Service() {
             TransferStatusBus.fail(currentOperation, kind, "FOREGROUND_SERVICE_TIMEOUT")
         }
         transferJob?.cancel(CancellationException("FOREGROUND_SERVICE_TIMEOUT"))
-        stopSelf(startId)
+        stopSelf()
     }
 
     override fun onDestroy() {

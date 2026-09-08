@@ -98,17 +98,17 @@ class FileTransferRepository(context: Context) {
         onProgress(0, source.size)
 
         withClient(pc) { client ->
+            val create =
+                CreateTransfer(
+                    shareId,
+                    destination,
+                    source.size,
+                    source.sha256,
+                    UUID.randomUUID().toString()
+                )
             var transferId: String? = null
             var completed = false
             try {
-                val create =
-                    CreateTransfer(
-                        shareId,
-                        destination,
-                        source.size,
-                        source.sha256,
-                        UUID.randomUUID().toString()
-                    )
                 val created = createTransferWithResponseRecovery(client, pc, create)
                 validateTransfer(created, source.size, source.sha256)
                 transferId = created.transferId
@@ -171,10 +171,18 @@ class FileTransferRepository(context: Context) {
                 onProgress(source.size, source.size)
                 result
             } catch (error: Exception) {
-                if (transferId != null && !completed) {
+                if (!completed) {
                     withContext(NonCancellable) {
                         try {
-                            cancelTransfer(client, pc, transferId)
+                            if (transferId == null) {
+                                transferId =
+                                    createTransferWithResponseRecovery(
+                                        client,
+                                        pc,
+                                        create
+                                    ).transferId
+                            }
+                            transferId?.let { cancelTransfer(client, pc, it) }
                         } catch (_: Exception) {
                             // Server-side shutdown/recovery cleanup remains the final fallback.
                         }
