@@ -2,13 +2,11 @@
 
 Updated: 2026-09-09
 
-Current main: `0591396f40097d834ba583a10f2dd4e5953b6a3e` (PR #12 merged)
-
-Phone Transfer is still pre-MVP because full physical-device acceptance is not complete. The core file-transfer path is now substantially implemented: pairing, mDNS discovery, shared-folder configuration, Windows handle-safe filesystem, authenticated file-transfer API, Android SAF/Foreground Service transfer ownership, Windows durable upload recovery, and Android process-kill upload recovery are all present on `main`.
+Phone Transfer remains pre-MVP because full physical-device acceptance is not complete. The core path is substantially implemented: pairing, mDNS discovery, shared-folder configuration, Windows handle-safe filesystem, authenticated file transfer, Android SAF/Foreground Service ownership, Windows durable upload recovery, Android process-kill upload recovery, and Android → PC plain-text/URL sending are implemented in the current development line.
 
 See [development handoff](handoff.md) for the next work order.
 
-## Phase 1 — complete
+## Phase 1 — foundation complete
 
 Implemented:
 
@@ -24,168 +22,123 @@ Implemented:
 
 ## Phase 2 — pairing and discovery implemented; physical acceptance pending
 
-Windows includes:
+Windows provides single-use 120-second QR challenges, ECDSA P-256 proof verification, local comparison-code approval, signature-authorized polling, isolated HTTPS pairing, SQLite device registration/revocation, current-user non-exportable CNG server identity, request-by-request revocation checks and bounded shutdown.
 
-- single-use 120-second QR challenges;
-- ECDSA P-256 proof verification;
-- local comparison-code approval;
-- signature-authorized polling;
-- isolated HTTPS pairing;
-- SQLite device registration/revocation;
-- current-user non-exportable CNG server identity;
-- request-by-request revocation checks;
-- bounded shutdown.
+Android provides QR validation/scanning, Android Keystore identity, pinned HTTPS registration, signed polling, comparison-code UI, mTLS `/api/v1/info` verification, saved-PC persistence and local removal.
 
-Android includes:
-
-- QR validation and offline scanning;
-- Android Keystore identity;
-- pinned HTTPS registration;
-- signed polling and comparison-code UI;
-- mTLS `/api/v1/info` verification before saved-PC persistence;
-- saved endpoint/pin/device identity persistence and local removal.
-
-Production mDNS is wired. Windows advertises `_phone-transfer._tcp` on the selected private IPv4 interface and Android uses `NsdManager` with a multicast lock. Discovery is routing metadata only: endpoint changes are persisted only after the stored SPKI pin, client identity and stable Device ID all verify.
+Windows advertises `_phone-transfer._tcp` on the selected private IPv4 interface and Android discovers it with `NsdManager`. Discovery data is routing metadata only; endpoint changes are saved only after the stored SPKI pin, client identity and stable Device ID verify.
 
 ## Phase 3 — authenticated handle-safe file transfer implemented
 
-Windows can select, persist and clear one receive-folder root. Configuration accepts only existing local NTFS/ReFS folders and rejects UNC paths, volume roots, overlap with application data and reparse points in the configured ancestry.
+Windows can select, persist and clear one local NTFS/ReFS receive root. UNC paths, volume roots, overlap with application data and unsafe reparse ancestry are rejected. Traversal is based on retained directory handles; reparse points, junctions, symlinks, hardlinks, identity replacement races and unsafe mount/path transitions fail closed. Staging is private and completion uses same-volume atomic no-overwrite rename.
 
-The handle-safe filesystem adapter pins the configured root and traverses child components relative to retained handles. Reparse points, junctions, symlinks, hardlinks, identity replacement races and unsafe mount/path transitions fail closed. Staging is private and completion uses same-volume atomic no-overwrite rename.
+The authenticated file API includes share/listing, durable upload create/status/chunk/cancel/complete and stable-handle download with strong ETag/range support. Transfer ownership is bound to the authenticated paired device and permissions are checked per operation. Physical root paths and native exception details are not exposed over the wire.
 
-The authenticated file API provides:
-
-- `GET /api/v1/shares`;
-- `GET /api/v1/shares/{shareId}/entries`;
-- `POST /api/v1/transfers`;
-- `GET /api/v1/transfers/{transferId}`;
-- `PATCH /api/v1/transfers/{transferId}/content`;
-- `DELETE /api/v1/transfers/{transferId}`;
-- `POST /api/v1/transfers/{transferId}/complete`;
-- `GET /api/v1/shares/{shareId}/content` with strong ETag and bounded range support.
-
-Transfer ownership is bound to the authenticated paired device and permissions are checked per operation. Physical Windows root paths and native exception details are not exposed over the wire.
-
-Android uses `ACTION_OPEN_DOCUMENT` and `CREATE_DOCUMENT`; content URIs remain capabilities and are never converted to filesystem paths. Upload hashes/counts the source, reopens it and sends bounded chunks with exact `Upload-Offset`. Download streams directly into the selected SAF destination and validates length plus SHA-256-derived ETag before success. Long-running I/O is owned by a non-exported `dataSync` Foreground Service.
+Android uses `ACTION_OPEN_DOCUMENT` and `CREATE_DOCUMENT`; content URIs remain capabilities and are never converted to filesystem paths. Long-running file I/O is owned by a non-exported `dataSync` Foreground Service.
 
 ## Durable upload recovery — implemented on both sides
 
-### Windows authority — PR #11 merged
+### Windows authority — PR #11
 
-PR #11 is merged into `main`. Production upload state is no longer process-local.
+Production upload state is durable SQLite rather than process-local memory. The main invariants are:
 
-Windows durable recovery includes:
-
-- separate versioned SQLite transfer journal;
 - persistent idempotency keys and committed offsets;
-- per-transfer mutation gates and short device commit fences;
-- durable staging capabilities with volume/file identity checks;
-- startup readiness reconciliation before the API listener becomes available;
+- startup reconciliation before API readiness;
 - `write → FlushToDisk → SQLite commit → response` ordering;
 - rollback only after durable truncate/flush succeeds;
 - rename as the file commit point;
-- rename-before-DB recovery using destination file ID, volume, size and SHA-256 proof;
-- terminal-first cancel and device revoke ordering;
-- persisted opaque share generations so an old root cannot be reopened by path strings;
+- rename-before-DB recovery using destination identity/volume/size/SHA-256 proof;
+- terminal-first cancel and device-revoke ordering;
+- persisted opaque share generations so old roots are never rediscovered by string path;
 - bounded orphan inspection and bounded shutdown.
 
-The server-side journal remains the authoritative source of upload progress after restart.
+The Windows journal remains the authoritative source of upload progress after restart. See [Windows durable recovery contract](architecture/durable-transfer-recovery.md).
 
-See [Windows durable recovery contract](architecture/durable-transfer-recovery.md).
+### Android process-kill recovery — PR #12
 
-### Android process-kill recovery — PR #12 merged
+Android persists one bounded app-private recovery record or completion receipt. It keeps a stable operation/idempotency identity, source name/size/SHA-256, server transfer ID and last observed committed offset. Actual `ContentResolver.persistedUriPermissions`, not a saved boolean alone, is the SAF capability authority.
 
-PR #12 is merged into `main`.
+Before resumed bytes, Android re-verifies the saved PC through pinned TLS/client identity and `/api/v1/info`, re-hashes the full source, and reconciles against Windows state. Server-ahead/local-behind is adoptable; server-behind/local-ahead fails closed. Lost create/PATCH/complete responses, durable cancel intent, cancel-vs-complete races, completion receipts and corrupt local journals are handled explicitly.
 
-Android durable upload recovery includes:
+Interrupted downloads are intentionally not resumed to the same generic SAF destination after process death. See [Android durable recovery contract](architecture/android-durable-transfer-recovery.md).
 
-- one versioned/bounded app-private recovery journal;
-- checked file sync, atomic rename and directory sync commit boundary;
-- stable operation ID and idempotency key persisted before server create;
-- source name/size/SHA-256 persisted before create;
-- server transfer ID and last observed committed offset checkpointed monotonically;
-- actual `ContentResolver.persistedUriPermissions` used as the SAF capability authority rather than a JSON boolean alone;
-- saved PC identity re-verification through pinned TLS/client identity and `/api/v1/info` before resumed bytes;
-- full source re-hash before upload continuation;
-- server-ahead/local-behind adoption;
-- server-behind/local-ahead fail closed;
-- lost create response and ambiguous PATCH/complete recovery;
-- durable cancel intent before remote cancellation;
-- cancel/completion and stale-writer race handling;
-- completion receipt persistence across process recreation;
-- corrupt/unknown/oversized/multiple recovery records fail closed;
-- Activity/ViewModel recreation cannot downgrade a live Foreground Service transfer to stale resumable state;
-- process-killed downloads are intentionally not resumed to the same generic SAF destination.
+## Android → PC text / URL — implemented in PR #14
 
-See [Android durable recovery contract](architecture/android-durable-transfer-recovery.md).
+This increment uses the existing Protocol v1 `SendText` / `TextEntry` wire model without changing OpenAPI or generated DTOs.
 
-## Automated validation status
+Implemented boundary:
 
-PR #12 final HEAD `4c65f0369c96a01f0c1e9cc73a0b3ba2b7e40f5e` passed GitHub Actions CI #231 before merge.
+- delivery direction is Android → PC only;
+- authenticated `POST /api/v1/text` is served on the existing mTLS API listener;
+- `TextSend` permission is enforced server-side;
+- kinds remain `plainText` and `url` so future history/reverse delivery can extend the same model;
+- content is limited to 65,536 UTF-16 code units and the JSON request remains under the protocol body bound;
+- URL kind accepts only absolute `http` / `https` URLs without embedded credentials;
+- Android retries one raw transport failure with the same per-device idempotency key;
+- Windows suppresses duplicate presentation for the same key/payload within the active runtime and rejects key reuse with different content;
+- Windows shows the latest received value and lets the user copy it;
+- URL receipt never auto-launches a browser; opening happens only after an explicit PC-side button click;
+- tray notifications are generic and do not expose the received text itself.
 
-The final CI covered:
+User-visible history, PC → Android delivery and Android `ACTION_SEND` / `ACTION_SEND_MULTIPLE` integration remain separate increments. The Protocol v1 extensibility for those features is retained.
 
-- Android formatting, protocol tests, app unit tests, lint and `assembleDebug`;
-- Windows restore, format, Release build and tests;
-- protocol schema validation, generated-code consistency and `git diff --check`.
+## Automated validation
 
-The final recovery audit found no remaining Critical, High or merge-blocking Medium issue in the automated/code-auditable boundary. This does **not** substitute for real-device acceptance.
+CI validates:
+
+- Android Spotless, generated protocol tests, app JVM unit tests, lint and `assembleDebug`;
+- Windows restore, `dotnet format`, Release build and xUnit tests;
+- protocol schema validation, generator drift and `git diff --check`.
+
+The text/URL increment adds Android rule tests plus a real-Kestrel Windows mTLS integration test for idempotent delivery, URL validation and permission enforcement. CI is not a substitute for real-device acceptance.
 
 ## Operational limits still present
 
-Windows durable journal currently keeps up to 4,096 records and deliberately does not auto-evict idempotency mappings. Active transfers are bounded per device and staging reservation is bounded. Failed/cancelled records may conservatively retain reservation when cleanup cannot be proven.
-
-Automatic journal retention/maintenance is not implemented yet. Do not delete an active `transfers.db` simply to reclaim capacity. Retention must be designed so it does not break idempotency, terminal proof, recovery or staging ownership.
-
-Entry-list pagination is not implemented; the first page is capped and non-empty cursors are rejected.
-
-Windows does not automatically rebind when the selected DHCP/Wi-Fi adapter changes; the user can restart the connection from the tray UI.
-
-Android recovery is user-driven after app reopen. No unrestricted background resurrection scheduler is claimed.
+- Windows durable transfer journal keeps up to 4,096 records and does not auto-evict idempotency mappings.
+- Automatic transfer-journal retention/maintenance is not implemented. Do not delete an active `transfers.db` to reclaim capacity.
+- Text/URL has no user-visible persistent history in this increment; the duplicate-suppression window is process-local and bounded.
+- Entry-list pagination is not implemented; the first page is capped and non-empty cursors are rejected.
+- Windows does not automatically rebind when the selected DHCP/Wi-Fi adapter changes; the user can restart the connection from the tray UI.
+- Android durable recovery remains user-driven after app reopen; no unrestricted background resurrection scheduler is claimed.
 
 ## Required physical-device acceptance
 
-This is the largest remaining MVP gate.
+This is the largest remaining MVP gate. Windows 11 + Android should be exercised together for at least:
 
-Windows 11 + Android should be exercised together for at least:
-
-- initial QR pairing and comparison-code approval;
-- mDNS discovery/re-discovery on real Wi-Fi;
+- QR pairing / comparison code and real-Wi-Fi mDNS;
 - Android Keystore mTLS requests;
-- basic upload and download;
+- basic upload/download;
 - seekable and nonseekable/reopenable SAF providers;
 - providers that accept and reject persistable grants;
 - upload process kill before create, during upload and after server completion;
 - Android app/process restart and device reboot;
 - Windows process restart / PC reboot;
-- Wi-Fi interruption and reconnect;
-- screen-off and foreground-service timeout behavior;
-- multi-GB transfer, including 4 GiB+ where feasible;
-- disk-full / staging failure;
-- PC sleep/resume;
-- NTFS and ReFS where available;
-- real mounted-volume rejection behavior;
-- Windows private ACL and security-software interference where practical.
+- Wi-Fi interruption/reconnect, screen-off and FGS timeout;
+- multi-GB transfer, disk-full/staging failure and PC sleep/resume;
+- NTFS/ReFS and real mounted-volume rejection where available;
+- Android → PC plain text and URL send;
+- tray-hidden receipt notification;
+- copy behavior;
+- URL does not auto-open and opens only after explicit user action.
 
-Power-loss and filesystem-flush semantics can only be validated meaningfully on real storage; CI cannot prove them.
+Power-loss/filesystem-flush semantics can only be validated meaningfully on real storage; CI cannot prove them.
 
-## Remaining implementation after the core recovery work
+## Remaining implementation
 
-These are separate follow-up increments rather than blockers in the durable upload state machine itself:
+Separate follow-up increments:
 
-1. Windows transfer journal retention / maintenance policy and tooling.
-2. DHCP/Wi-Fi adapter change auto-rebind.
+1. Windows transfer-journal retention / maintenance policy and tooling.
+2. DHCP/Wi-Fi adapter-change auto-rebind.
 3. Entry-list pagination.
-4. `ACTION_SEND` / `ACTION_SEND_MULTIPLE` UX.
-5. text / URL transfer and history UI.
-6. Optional bounded recovery scheduler if unattended recovery becomes a product requirement.
-7. Release/operations hardening such as protected `main`, required CI checks, consistent explicit state-store ACL policy and optionally pinning third-party Actions to immutable SHAs.
+4. Android `ACTION_SEND` / `ACTION_SEND_MULTIPLE` UX, including sharing text/URLs from other apps.
+5. Optional text history and PC → Android delivery if product requirements later need them.
+6. Optional bounded recovery scheduler.
+7. Release/operations hardening such as protected `main`, required CI checks, consistent explicit state-store ACL policy and optional immutable Action SHA pinning.
 
 ## Continuation order
 
-1. Keep README / implementation status / handoff synchronized with `main`.
-2. Create a concrete physical-device acceptance checklist and record evidence rather than treating CI as device acceptance.
-3. Run Android ↔ Windows real-device acceptance and fix only findings demonstrated by those tests.
-4. Design Windows journal retention/maintenance separately, preserving idempotency and recovery invariants.
-5. Add ACTION_SEND/MULTIPLE and text/URL/history as independent product increments.
-6. Add auto-rebind/pagination/recovery-scheduler features according to product priority.
+1. Finish PR #14 CI/self-audit and merge only after explicit approval.
+2. Create a concrete physical-device acceptance checklist with evidence fields.
+3. Run Android ↔ Windows real-device acceptance, including text/URL delivery, and fix demonstrated findings in separate PRs.
+4. Design Windows transfer-journal retention/maintenance separately without weakening idempotency/recovery invariants.
+5. Add ACTION_SEND/MULTIPLE or other UX according to product priority.

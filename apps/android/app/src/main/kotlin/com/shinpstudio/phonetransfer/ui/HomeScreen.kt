@@ -103,7 +103,11 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         ) {
             Text("登録する")
         }
-        if (state.busy) {
+        if (
+            state.busy &&
+            transfer !is TransferServiceState.Running &&
+            transfer !is TransferServiceState.Resumable
+        ) {
             TextButton(onClick = viewModel::cancel) {
                 Text("中止")
             }
