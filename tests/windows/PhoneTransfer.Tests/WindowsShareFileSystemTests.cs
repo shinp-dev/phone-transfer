@@ -4,6 +4,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 using PhoneTransfer.Application.Files;
 using PhoneTransfer.Domain;
 using PhoneTransfer.Infrastructure.Storage;
@@ -152,6 +153,39 @@ public sealed class WindowsShareFileSystemTests : IDisposable
         Directory.Move(Root + "-moved", Root);
     }
 
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(0x100u)] // FILE_WRITE_ATTRIBUTES does not participate in data sharing checks.
+    [InlineData(0x40000000u)] // GENERIC_WRITE
+    public void PinnedRootFailsClosedOnInPlaceReparseMutation(uint access)
+    {
+        using var session = Open();
+        using var attacker = CreateFileW(Root, access, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+        if (attacker.IsInvalid)
+        {
+            Assert.Contains(Marshal.GetLastWin32Error(), new[] { 5, 32 });
+            return;
+        }
+        var substitute = Encoding.Unicode.GetBytes(@"\??\" + Outside);
+        var print = Encoding.Unicode.GetBytes(Outside);
+        var data = new byte[16 + substitute.Length + 2 + print.Length + 2];
+        BitConverter.GetBytes(0xA0000003u).CopyTo(data, 0); // IO_REPARSE_TAG_MOUNT_POINT
+        BitConverter.GetBytes(checked((ushort)(data.Length - 8))).CopyTo(data, 4);
+        BitConverter.GetBytes(checked((ushort)substitute.Length)).CopyTo(data, 10);
+        BitConverter.GetBytes(checked((ushort)(substitute.Length + 2))).CopyTo(data, 12);
+        BitConverter.GetBytes(checked((ushort)print.Length)).CopyTo(data, 14);
+        substitute.CopyTo(data, 16);
+        print.CopyTo(data, 18 + substitute.Length);
+        var changed = DeviceIoControl(attacker, 0x000900A4, data, data.Length, IntPtr.Zero, 0, out _, IntPtr.Zero);
+        if (changed)
+        {
+            Assert.Throws<IOException>(() => session.List(Relative("")));
+            Assert.Throws<IOException>(() => session.CreateStaging(Relative("must-not-exist.txt")));
+            Assert.Single(Directory.GetFileSystemEntries(Outside));
+        }
+        else Assert.Empty(session.List(Relative("")));
+    }
+
     [Fact]
     public void CheckUseBoundaryIsDeterministicAndCannotSwapOpenReadOrAncestors()
     {
@@ -285,7 +319,7 @@ public sealed class WindowsShareFileSystemTests : IDisposable
             Assert.Throws<IOException>(() => session.CreateStaging(Relative("deep/missing/file.txt")));
             using var file = session.OpenRead(Relative("deep/read.txt"));
         }
-        Directory.Delete(Root, true); // Includes parents retained on partial-failure paths.
+        DeleteTree(Root); // Includes parents retained on partial-failure paths.
     }
 
     private static void Junction(string path, string target)
@@ -303,12 +337,34 @@ public sealed class WindowsShareFileSystemTests : IDisposable
         Assert.True(process.ExitCode == 0, stdout + stderr);
     }
 
+    private static void DeleteTree(string path)
+    {
+        // .NET recursive removal calls DeleteVolumeMountPoint for junctions, which can return
+        // ERROR_INVALID_PARAMETER on the runner. Remove the link itself without traversing it.
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0)
+        {
+            foreach (var directory in Directory.GetDirectories(path)) DeleteTree(directory);
+            foreach (var file in Directory.GetFiles(path)) File.Delete(file);
+        }
+        Assert.True(RemoveDirectoryW(path), $"RemoveDirectory failed: {Marshal.GetLastWin32Error()}");
+    }
+
     public void Dispose()
     {
         // Deliberately not best-effort: leaked handles or accidental outside-file damage fail the test.
         Assert.Equal("outside-secret", File.ReadAllText(Path.Combine(Outside, "secret.txt")));
-        Directory.Delete(fixture, true);
+        DeleteTree(fixture);
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveDirectoryW(string path);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(SafeFileHandle file, uint code, byte[] input, int inputSize,
+        IntPtr output, int outputSize, out uint returned, IntPtr overlapped);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

@@ -56,6 +56,7 @@ public sealed class WindowsShareFileSystem : IShareFileSystem
             {
                 CheckOpen();
                 using var chain = Traverse(Components(directory));
+                WindowsFileNative.Inspect(chain.Last(Root));
                 var entries = new List<ShareEntry>();
                 // Bounded work, including names that cannot safely be exposed. Pagination is future work.
                 foreach (var name in WindowsFileNative.Enumerate(chain.Last(Root), 4096))
@@ -272,6 +273,8 @@ public sealed class WindowsShareFileSystem : IShareFileSystem
                 {
                     CheckStaging();
                     RandomAccess.FlushToDisk(handle);
+                    WindowsFileNative.Inspect(handle);
+                    WindowsFileNative.Inspect(chain.Last(owner.Root));
                     WindowsFileNative.RenameNoReplace(handle, chain.Last(owner.Root), destination!);
                     completed = true;
                     Dispose();

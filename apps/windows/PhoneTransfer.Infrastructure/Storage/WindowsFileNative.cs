@@ -19,8 +19,8 @@ internal static class WindowsFileNative
 
     internal static SafeFileHandle OpenVolume(string drive)
     {
-        var handle = CreateFileW(drive, ReadAccess, 1, IntPtr.Zero, 3,
-            0x02000000 | OpenReparsePoint, IntPtr.Zero); // BACKUP_SEMANTICS; share read only
+        var handle = CreateFileW(drive, ReadAccess, 3, IntPtr.Zero, 3,
+            0x02000000 | OpenReparsePoint, IntPtr.Zero); // BACKUP_SEMANTICS; no delete sharing
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
@@ -64,13 +64,13 @@ internal static class WindowsFileNative
                 Length = Marshal.SizeOf<ObjectAttributes>(),
                 RootDirectory = parent.DangerousGetHandle(),
                 ObjectName = unicodeMemory,
-                Attributes = 0x40, // OBJ_CASE_INSENSITIVE; reparse processing disabled below
+                Attributes = 0x1040, // OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE
                 SecurityDescriptor = descriptor
             };
             var access = ReadAccess | (writable ? 2u : 0) | (delete ? DeleteAccess : 0);
             var options = OpenReparsePoint | SynchronousIo | (directory == true ? 1u : directory == false ? 0x40u : 0);
             var status = NtCreateFile(out var result, access, ref attributes, out _, IntPtr.Zero,
-                0x80, writable || delete ? 0u : 1u, create ? 2u : 1u, options, IntPtr.Zero, 0);
+                0x80, directory == true ? 3u : writable || delete ? 0u : 1u, create ? 2u : 1u, options, IntPtr.Zero, 0);
             if (status < 0)
             {
                 result.Dispose();
@@ -100,7 +100,7 @@ internal static class WindowsFileNative
             if ((attributes & 0x400) != 0) throw new IOException("REPARSE_POINT_REJECTED");
             var directory = (attributes & 0x10) != 0;
             if (!GetFileInformationByHandleEx(handle, 1, buffer, 24)) throw Error(Marshal.GetLastWin32Error());
-            // Reject preexisting hard links as well as pending deletion. No writes/deletes are shared.
+            // Reject preexisting hard links as well as pending deletion. File writes/deletes are not shared.
             if (Marshal.ReadByte(buffer, 20) != 0 || (!directory && Marshal.ReadInt32(buffer, 16) != 1))
                 throw new IOException("UNSTABLE_FILE_REJECTED");
             if (!GetFileInformationByHandleEx(handle, 18, buffer, 24)) throw Error(Marshal.GetLastWin32Error());
