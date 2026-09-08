@@ -4,7 +4,6 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using PhoneTransfer.Domain;
 using PhoneTransfer.Host;
-using PhoneTransfer.Infrastructure.Discovery;
 
 namespace PhoneTransfer.App;
 
@@ -184,12 +183,12 @@ internal sealed class ServerWindow : Form
         {
             await StopAsync();
             devices.DataSource = null;
-            var selected = (networks.SelectedItem as LanAdapter)?.Address;
-            var adapters = LanAdapters.Find();
+            var selected = (networks.SelectedItem as WindowsLanAdapter)?.Address;
+            var adapters = WindowsLanAdapters.Find();
             networks.DataSource = adapters.ToList();
             if (selected is not null)
                 networks.SelectedItem = adapters.FirstOrDefault(adapter => adapter.Address.Equals(selected)) ?? adapters.FirstOrDefault();
-            if (networks.SelectedItem is not LanAdapter adapter)
+            if (networks.SelectedItem is not WindowsLanAdapter adapter)
             {
                 status.Text = "LANに接続されていません。Wi-Fiまたは有線LANを接続してください。";
                 return;
