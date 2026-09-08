@@ -95,7 +95,8 @@ class DurableUploadRepository(context: Context) {
         RemotePathRules.validate(directory, allowRoot = true)
         RemotePathRules.validateName(source.name)
         val destination = RemotePathRules.join(directory, source.name)
-        val create = CreateTransfer(shareId, destination, source.size, source.sha256, idempotencyKey)
+        val create =
+            CreateTransfer(shareId, destination, source.size, source.sha256, idempotencyKey)
 
         withClient(pc) { client ->
             val encoded = json.encodeToString(create)
@@ -294,7 +295,13 @@ class DurableUploadRepository(context: Context) {
     }
 
     private fun queryDisplayName(uri: Uri): String {
-        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        resolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (index >= 0 && cursor.moveToFirst()) {
                 val value = cursor.getString(index)
