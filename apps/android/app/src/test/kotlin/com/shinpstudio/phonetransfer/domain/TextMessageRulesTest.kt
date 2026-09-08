@@ -9,7 +9,10 @@ class TextMessageRulesTest {
     @Test
     fun plainTextAcceptsNonEmptyContentWithinLimit() {
         TextMessageRules.validate(TextMessageRules.PLAIN_TEXT, "hello")
-        TextMessageRules.validate(TextMessageRules.PLAIN_TEXT, "x".repeat(TextMessageRules.MAX_CONTENT_LENGTH))
+        TextMessageRules.validate(
+            TextMessageRules.PLAIN_TEXT,
+            "x".repeat(TextMessageRules.MAX_CONTENT_LENGTH)
+        )
     }
 
     @Test

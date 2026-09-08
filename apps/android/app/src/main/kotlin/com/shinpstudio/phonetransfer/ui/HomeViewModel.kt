@@ -159,11 +159,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update {
             it.copy(
                 connectionLabel =
-                    if (kind == TextMessageRules.URL) {
-                        "PCへURLを送りました"
-                    } else {
-                        "PCへテキストを送りました"
-                    }
+                if (kind == TextMessageRules.URL) {
+                    "PCへURLを送りました"
+                } else {
+                    "PCへテキストを送りました"
+                }
             )
         }
     }
@@ -398,10 +398,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         return repository.saved().firstOrNull { it.deviceId == id }
     }
 
-    private fun runOperation(
-        blockWhenTransferPending: Boolean = true,
-        block: suspend () -> Unit
-    ) {
+    private fun runOperation(blockWhenTransferPending: Boolean = true, block: suspend () -> Unit) {
         if (
             operation?.isCompleted == false ||
             (blockWhenTransferPending && state.value.transfer.blocksNewTransfer())

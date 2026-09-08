@@ -206,7 +206,9 @@ internal class TextMessageRepository(context: Context) {
 
     private fun requireCanonicalUuid(value: String, code: String) {
         try {
-            require(UUID.fromString(value).toString() == value && UUID.fromString(value) != UUID(0, 0)) {
+            require(
+                UUID.fromString(value).toString() == value && UUID.fromString(value) != UUID(0, 0)
+            ) {
                 code
             }
         } catch (error: IllegalArgumentException) {
