@@ -109,7 +109,9 @@ internal sealed class ServerWindow : Form
             var started = await WindowsServerRuntime.StartAsync(directory, adapter.Address, lifetime.Token);
             if (closing || IsDisposed) { await started.DisposeAsync(); return; }
             runtime = started;
-            status.Text = "スマホからの接続を待っています。";
+            status.Text = started.MdnsAvailable
+                ? "スマホからの接続を待っています。"
+                : "接続を開始しました。自動検出できない場合はQRで登録してください。";
             pair.Enabled = true;
             await RefreshDevicesAsync();
         }

@@ -39,6 +39,15 @@ internal object SavedPcRules {
         return pcs.filterNot { it.deviceId == id }
     }
 
+    fun updateEndpoint(pcs: List<SavedPc>, id: String, endpoint: String): List<SavedPc> {
+        validate(pcs)
+        val index = pcs.indexOfFirst { it.deviceId == id }
+        if (index < 0) return pcs
+        val updated = pcs[index].copy(lastKnownEndpoint = endpoint)
+        validatePc(updated)
+        return pcs.toMutableList().also { it[index] = updated }
+    }
+
     private fun validatePc(pc: SavedPc) {
         check(UUID.fromString(pc.deviceId).toString() == pc.deviceId)
         PairingInvitation.lanEndpoint(pc.lastKnownEndpoint)
@@ -64,6 +73,14 @@ internal class SavedPcStore private constructor(context: Context) {
     fun remove(id: String): List<SavedPc> {
         val next = SavedPcRules.remove(readUnlocked(), id)
         writeUnlocked(next)
+        return next
+    }
+
+    @Synchronized
+    fun updateEndpoint(id: String, endpoint: String): List<SavedPc> {
+        val current = readUnlocked()
+        val next = SavedPcRules.updateEndpoint(current, id, endpoint)
+        if (next != current) writeUnlocked(next)
         return next
     }
 

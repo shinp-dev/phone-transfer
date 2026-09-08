@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Net;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
@@ -5,6 +6,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Builder;
 using PhoneTransfer.Application.Pairing;
 using PhoneTransfer.Domain;
+using PhoneTransfer.Infrastructure.Discovery;
 using PhoneTransfer.Infrastructure.Persistence;
 using PhoneTransfer.Infrastructure.Security;
 using PhoneTransfer.Protocol;
@@ -23,7 +25,9 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
     private readonly IPAddress address;
     private readonly WebApplication bootstrap;
     private readonly WebApplication api;
+    private WindowsMdnsAdvertiser? mdns;
     public PairingCoordinator Pairing { get; }
+    public bool MdnsAvailable => mdns is not null;
 
     private WindowsServerRuntime(string directory, IPAddress address)
     {
@@ -43,12 +47,31 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         {
             await runtime.api.StartAsync(token).ConfigureAwait(false);
             await runtime.bootstrap.StartAsync(token).ConfigureAwait(false);
+            runtime.StartMdns();
             return runtime;
         }
         catch
         {
             await runtime.DisposeAsync().ConfigureAwait(false);
             throw;
+        }
+    }
+
+    private void StartMdns()
+    {
+        var interfaceIndex = LanAdapters.FindInterfaceIndex(address);
+        var advertisement = interfaceIndex is uint index
+            ? MdnsAdvertisement.Create(identity.DeviceId, address, ApiPort, index)
+            : null;
+        if (advertisement is null) return;
+        try
+        {
+            mdns = WindowsMdnsAdvertiser.Start(advertisement);
+        }
+        catch (Exception exception) when (exception is Win32Exception or DllNotFoundException or EntryPointNotFoundException)
+        {
+            // QR/manual endpoints remain available on networks or Windows builds where DNS-SD cannot advertise.
+            mdns = null;
         }
     }
 
@@ -69,6 +92,9 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         Pairing.ClosePairing();
+        var discovery = mdns;
+        mdns = null;
+        if (discovery is not null) await discovery.DisposeAsync().ConfigureAwait(false);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         try
         {
