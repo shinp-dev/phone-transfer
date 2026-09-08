@@ -40,6 +40,16 @@ class SavedPcRulesTest {
         assertTrue(encoded.contains("\"version\":1"))
         assertTrue(encoded.contains("\"pcs\""))
         assertEquals(listOf(value), SavedPcPersistence.decode(encoded))
+        assertEquals(listOf(value), SavedPcPersistence.decode(encoded.toByteArray(Charsets.UTF_8)))
+    }
+
+    @Test
+    fun persistenceRejectsOversizedInputBeforeJsonParsing() {
+        val oversized = ByteArray(SavedPcPersistence.MAX_BYTES + 1)
+        val error = assertThrows(IllegalStateException::class.java) {
+            SavedPcPersistence.decode(oversized)
+        }
+        assertEquals("SAVED_PC_TOO_LARGE", error.message)
     }
 
     @Test

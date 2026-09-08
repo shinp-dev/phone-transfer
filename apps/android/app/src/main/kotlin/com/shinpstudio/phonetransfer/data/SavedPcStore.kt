@@ -62,8 +62,14 @@ internal object SavedPcRules {
 private data class SavedPcDocument(val version: Int, val pcs: List<SavedPc>)
 
 internal object SavedPcPersistence {
+    const val MAX_BYTES = 128 * 1024
     private const val VERSION = 1
     private val json = Json { ignoreUnknownKeys = false }
+
+    fun decode(bytes: ByteArray): List<SavedPc> {
+        check(bytes.size <= MAX_BYTES) { "SAVED_PC_TOO_LARGE" }
+        return decode(bytes.toString(Charsets.UTF_8))
+    }
 
     fun decode(text: String): List<SavedPc> {
         val root = json.parseToJsonElement(text)
@@ -116,8 +122,18 @@ internal class SavedPcStore private constructor(context: Context) {
 
     private fun readUnlocked(): List<SavedPc> {
         if (!file.baseFile.exists()) return emptyList()
-        val text = file.openRead().use { it.readBytes().toString(Charsets.UTF_8) }
-        return SavedPcPersistence.decode(text)
+        val bytes = file.openRead().use { input ->
+            val buffer = ByteArray(SavedPcPersistence.MAX_BYTES + 1)
+            var size = 0
+            while (size < buffer.size) {
+                val count = input.read(buffer, size, buffer.size - size)
+                if (count <= 0) break
+                size += count
+            }
+            check(size <= SavedPcPersistence.MAX_BYTES) { "SAVED_PC_TOO_LARGE" }
+            buffer.copyOf(size)
+        }
+        return SavedPcPersistence.decode(bytes)
     }
 
     private fun writeUnlocked(pcs: List<SavedPc>) {
