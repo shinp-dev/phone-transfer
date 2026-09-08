@@ -176,7 +176,19 @@ public sealed class WindowsShareFileSystemTests : IDisposable
         BitConverter.GetBytes(checked((ushort)print.Length)).CopyTo(data, 14);
         substitute.CopyTo(data, 16);
         print.CopyTo(data, 18 + substitute.Length);
+        // Positive control: the exact same buffer must really create a junction on an unpinned
+        // directory. A malformed attack payload must not make the rejection test pass.
+        var controlPath = Path.Combine(fixture, "mutation-control");
+        Directory.CreateDirectory(controlPath);
+        using (var control = CreateFileW(controlPath, 0x40000000, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero))
+        {
+            Assert.False(control.IsInvalid);
+            Assert.True(DeviceIoControl(control, 0x000900A4, data, data.Length, IntPtr.Zero, 0, out _, IntPtr.Zero),
+                $"Control mutation failed: {Marshal.GetLastWin32Error()}");
+        }
+        Assert.True((File.GetAttributes(controlPath) & FileAttributes.ReparsePoint) != 0);
         var changed = DeviceIoControl(attacker, 0x000900A4, data, data.Length, IntPtr.Zero, 0, out _, IntPtr.Zero);
+        output.WriteLine($"In-place mutation access={access:X}: changed={changed}, error={Marshal.GetLastWin32Error()}");
         if (changed)
         {
             Assert.Throws<IOException>(() => session.List(Relative("")));
