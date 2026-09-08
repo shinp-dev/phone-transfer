@@ -46,8 +46,10 @@ object TransferStatusBus {
         val current = mutableState.value
         if (current is TransferServiceState.RecoveryBlocked) return
         if (
-            current is TransferServiceState.Running && current.operationId != operationId ||
-            current is TransferServiceState.Resumable && current.operationId != operationId
+            current is TransferServiceState.Running &&
+            current.operationId != operationId ||
+            current is TransferServiceState.Resumable &&
+            current.operationId != operationId
         ) {
             return
         }
