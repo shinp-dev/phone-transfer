@@ -2,13 +2,17 @@ package com.shinpstudio.phonetransfer.ui
 
 import android.app.Application
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.shinpstudio.phonetransfer.data.DurableTransferKind
 import com.shinpstudio.phonetransfer.data.FileTransferException
 import com.shinpstudio.phonetransfer.data.FileTransferRepository
 import com.shinpstudio.phonetransfer.data.NsdDiscovery
 import com.shinpstudio.phonetransfer.data.PairingRepository
+import com.shinpstudio.phonetransfer.data.PersistedTransferOperation
 import com.shinpstudio.phonetransfer.data.SavedPc
+import com.shinpstudio.phonetransfer.data.TransferOperationStore
 import com.shinpstudio.phonetransfer.domain.RemotePathRules
 import com.shinpstudio.phonetransfer.protocol.FileEntry
 import com.shinpstudio.phonetransfer.protocol.Share
@@ -43,12 +47,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = PairingRepository(application)
     private val fileRepository = FileTransferRepository(application)
     private val discovery = NsdDiscovery(application)
+    private val transferOperations = TransferOperationStore.get(application)
     private val mutableState = MutableStateFlow(HomeState())
     val state = mutableState.asStateFlow()
     private var operation: Job? = null
 
     init {
         runOperation {
+            restoreInterruptedTransfer()
             mutableState.update { it.copy(pcs = repository.saved()) }
         }
         viewModelScope.launch {
@@ -56,6 +62,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 mutableState.update { current ->
                     val label =
                         when (transfer) {
+                            is TransferServiceState.Resumable -> {
+                                if (transfer.canResume) {
+                                    "中断したファイル転送があります。内容を確認して再開できます"
+                                } else {
+                                    "中断した転送は再開せず、中止処理を完了する必要があります"
+                                }
+                            }
+
+                            is TransferServiceState.RecoveryBlocked -> {
+                                "転送の復旧情報を安全に読み取れないため、新しい転送を停止しています (${transfer.code})"
+                            }
+
                             is TransferServiceState.Completed -> {
                                 val action =
                                     if (transfer.kind == TransferKind.Upload) {
@@ -83,14 +101,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     try {
                         val refreshed = repository.acceptDiscovery(candidate) ?: return@collect
                         mutableState.update { current ->
-                            current.copy(
-                                pcs = repository.saved(),
-                                connectionLabel =
+                            val label =
                                 if (current.connectionLabel == "PC未接続") {
                                     "${refreshed.displayName} をLAN上で再検出しました"
                                 } else {
                                     current.connectionLabel
                                 }
+                            current.copy(
+                                pcs = repository.saved(),
+                                connectionLabel = label
                             )
                         }
                     } catch (error: CancellationException) {
@@ -164,7 +183,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         val current = state.value
         val share = current.share ?: return
         val deviceId = current.activePcId ?: return
-        if (!share.writable || current.transfer is TransferServiceState.Running) return
+        if (!share.writable || current.transfer.blocksNewTransfer()) return
         try {
             FileTransferService.startUpload(
                 getApplication(),
@@ -187,7 +206,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         val current = state.value
         val share = current.share ?: return
         val deviceId = current.activePcId ?: return
-        if (entry.kind != "file" || current.transfer is TransferServiceState.Running) return
+        if (entry.kind != "file" || current.transfer.blocksNewTransfer()) return
         try {
             RemotePathRules.validate(entry.relativePath)
             FileTransferService.startDownload(
@@ -203,6 +222,21 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         } catch (_: RuntimeException) {
             mutableState.update {
                 it.copy(connectionLabel = "ファイル転送サービスを開始できませんでした")
+            }
+        }
+    }
+
+    fun resumeTransfer() {
+        val transfer = state.value.transfer as? TransferServiceState.Resumable ?: return
+        if (!transfer.canResume) return
+        try {
+            FileTransferService.resume(getApplication(), transfer.operationId)
+            mutableState.update {
+                it.copy(connectionLabel = "中断したファイル転送を再確認しています")
+            }
+        } catch (_: RuntimeException) {
+            mutableState.update {
+                it.copy(connectionLabel = "ファイル転送サービスを再開できませんでした")
             }
         }
     }
@@ -225,10 +259,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun cancel() {
-        if (state.value.transfer is TransferServiceState.Running) {
-            FileTransferService.cancel(getApplication())
+        val transfer = state.value.transfer
+        if (transfer is TransferServiceState.Running) {
+            FileTransferService.cancel(getApplication(), transfer.operationId)
             mutableState.update {
                 it.copy(connectionLabel = "ファイル転送を中止しています…")
+            }
+            return
+        }
+        if (transfer is TransferServiceState.Resumable) {
+            FileTransferService.cancel(getApplication(), transfer.operationId)
+            mutableState.update {
+                it.copy(connectionLabel = "中断した転送の中止処理を行っています…")
             }
             return
         }
@@ -241,6 +283,69 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
     }
+
+    private suspend fun restoreInterruptedTransfer() {
+        val pending = withContext(Dispatchers.IO) {
+            try {
+                transferOperations.read().firstOrNull()
+            } catch (_: Exception) {
+                TransferStatusBus.recoveryBlocked("LOCAL_JOURNAL_INVALID")
+                null
+            }
+        } ?: return
+        val kind = pending.kind.toTransferKind()
+        val reason = if (pending.cancelRequested) "CANCEL_PENDING" else "PROCESS_INTERRUPTED"
+        // Provider access happens outside the journal monitor. Publish only if this snapshot
+        // still exists, while serialized with completion/removal/new-operation persistence.
+        val grantAvailable = try {
+            pending.completedFileName == null && hasPersistedGrant(pending)
+        } catch (_: Exception) {
+            false
+        }
+        withContext(Dispatchers.IO) {
+            try {
+                transferOperations.ifCurrent(pending) {
+                    val completedName = pending.completedFileName
+                    if (completedName != null) {
+                        TransferStatusBus.restoreCompleted(pending.operationId, kind, completedName)
+                    } else {
+                        TransferStatusBus.restoreResumable(
+                            pending.operationId,
+                            kind,
+                            pending.committedOffset,
+                            pending.totalSize ?: 0L,
+                            reason,
+                            grantAvailable && !pending.cancelRequested
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                TransferStatusBus.recoveryBlocked("LOCAL_JOURNAL_INVALID")
+            }
+        }
+        if (pending.cancelRequested && pending.completedFileName == null) {
+            FileTransferService.cancel(getApplication(), pending.operationId)
+        }
+    }
+
+    private fun hasPersistedGrant(operation: PersistedTransferOperation): Boolean {
+        val expectedUri = operation.uri.toUri()
+        val readGrant = operation.kind == DurableTransferKind.Upload
+        val permissions =
+            getApplication<Application>().contentResolver.persistedUriPermissions
+        return permissions.any { permission ->
+            if (permission.uri != expectedUri) {
+                false
+            } else if (readGrant) {
+                permission.isReadPermission
+            } else {
+                permission.isWritePermission
+            }
+        }
+    }
+
+    private fun DurableTransferKind.toTransferKind(): TransferKind =
+        if (this == DurableTransferKind.Upload) TransferKind.Upload else TransferKind.Download
 
     private suspend fun loadRemote(pc: SavedPc, path: String) {
         val share = fileRepository.listShares(pc).firstOrNull()
@@ -277,7 +382,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private fun runOperation(block: suspend () -> Unit) {
         if (
             operation?.isCompleted == false ||
-            state.value.transfer is TransferServiceState.Running
+            state.value.transfer.blocksNewTransfer()
         ) {
             return
         }
@@ -316,4 +421,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
     }
+
+    private fun TransferServiceState.blocksNewTransfer(): Boolean =
+        this is TransferServiceState.Running ||
+            this is TransferServiceState.Resumable ||
+            this is TransferServiceState.RecoveryBlocked
 }

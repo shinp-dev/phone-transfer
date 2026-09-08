@@ -51,8 +51,11 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             if (uri != null && entry != null) viewModel.download(entry, uri)
         }
     val transfer = state.transfer
-    val transferRunning = transfer is TransferServiceState.Running
-    val interactive = !state.busy && !transferRunning
+    val transferBlocking =
+        transfer is TransferServiceState.Running ||
+            transfer is TransferServiceState.Resumable ||
+            transfer is TransferServiceState.RecoveryBlocked
+    val interactive = !state.busy && !transferBlocking
 
     Column(
         modifier =
@@ -196,6 +199,32 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 }
             }
 
+            is TransferServiceState.Resumable -> {
+                val action = if (transfer.kind == TransferKind.Upload) "送信" else "受信"
+                Text("中断した${action}があります (${transfer.reason})")
+                if (transfer.totalBytes > 0) {
+                    Text("前回確認済み: ${transfer.transferredBytes} / ${transfer.totalBytes} bytes")
+                }
+                if (transfer.canResume) {
+                    Text("再開前にPCの本人性、SAF権限、転送状態を再確認します。送信は元ファイルを再ハッシュします。")
+                    Button(onClick = viewModel::resumeTransfer) {
+                        Text("安全確認して転送を再開")
+                    }
+                } else if (transfer.kind == TransferKind.Download) {
+                    Text("中断した受信は同じ保存先へ自動再試行しません。中止後、新しい保存先を選んで受信し直してください。")
+                } else {
+                    Text("この転送は安全に再開できません。中止処理だけを行います。")
+                }
+                TextButton(onClick = viewModel::cancel) {
+                    Text("この転送を中止")
+                }
+            }
+
+            is TransferServiceState.RecoveryBlocked -> {
+                Text("転送復旧データを検証できないため、新しい転送を開始しません。")
+                Text("アプリの復旧データを確認するまで安全側に停止します: ${transfer.code}")
+            }
+
             is TransferServiceState.Completed -> {
                 Text("直前のファイル転送は完了しました")
             }
@@ -211,7 +240,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             TransferServiceState.Idle -> Unit
         }
 
-        Text("テキスト転送と再起動後の転送再開は準備中です")
+        Text("送信はAndroid再起動後も安全確認して再開できます。中断した受信は安全側に再開しません。")
         Text("App ${BuildConfig.VERSION_NAME} / Build ${BuildConfig.VERSION_CODE} / Protocol 1")
     }
 }
