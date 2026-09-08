@@ -92,11 +92,7 @@ class FileTransferService : Service() {
         return START_NOT_STICKY
     }
 
-    private suspend fun runTransfer(
-        intent: Intent,
-        currentOperation: String,
-        kind: TransferKind
-    ) {
+    private suspend fun runTransfer(intent: Intent, currentOperation: String, kind: TransferKind) {
         val deviceId = intent.requireString(EXTRA_DEVICE_ID)
         val shareId = intent.requireString(EXTRA_SHARE_ID)
         val pc =
@@ -141,12 +137,7 @@ class FileTransferService : Service() {
         }
     }
 
-    private fun publishProgress(
-        operationId: String,
-        kind: TransferKind,
-        done: Long,
-        total: Long
-    ) {
+    private fun publishProgress(operationId: String, kind: TransferKind, done: Long, total: Long) {
         TransferStatusBus.progress(operationId, kind, done, total)
         val now = SystemClock.elapsedRealtime()
         if (done == total || now - lastNotificationAt >= NOTIFICATION_INTERVAL_MS) {
@@ -215,13 +206,12 @@ class FileTransferService : Service() {
         }
     }
 
-    private fun takePersistable(uri: Uri, flags: Int): Boolean =
-        try {
-            contentResolver.takePersistableUriPermission(uri, flags)
-            true
-        } catch (_: SecurityException) {
-            false
-        }
+    private fun takePersistable(uri: Uri, flags: Int): Boolean = try {
+        contentResolver.takePersistableUriPermission(uri, flags)
+        true
+    } catch (_: SecurityException) {
+        false
+    }
 
     private fun releasePersistable(uri: Uri, flags: Int) {
         try {

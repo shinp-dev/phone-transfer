@@ -18,22 +18,13 @@ sealed interface TransferServiceState {
         val totalBytes: Long
     ) : TransferServiceState
 
-    data class Completed(
-        val operationId: String,
-        val kind: TransferKind,
-        val fileName: String
-    ) : TransferServiceState
+    data class Completed(val operationId: String, val kind: TransferKind, val fileName: String) :
+        TransferServiceState
 
-    data class Failed(
-        val operationId: String,
-        val kind: TransferKind,
-        val code: String
-    ) : TransferServiceState
+    data class Failed(val operationId: String, val kind: TransferKind, val code: String) :
+        TransferServiceState
 
-    data class Cancelled(
-        val operationId: String,
-        val kind: TransferKind
-    ) : TransferServiceState
+    data class Cancelled(val operationId: String, val kind: TransferKind) : TransferServiceState
 }
 
 object TransferStatusBus {

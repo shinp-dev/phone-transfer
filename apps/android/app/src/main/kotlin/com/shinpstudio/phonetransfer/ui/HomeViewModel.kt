@@ -86,11 +86,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                             current.copy(
                                 pcs = repository.saved(),
                                 connectionLabel =
-                                    if (current.connectionLabel == "PC未接続") {
-                                        "${refreshed.displayName} をLAN上で再検出しました"
-                                    } else {
-                                        current.connectionLabel
-                                    }
+                                if (current.connectionLabel == "PC未接続") {
+                                    "${refreshed.displayName} をLAN上で再検出しました"
+                                } else {
+                                    current.connectionLabel
+                                }
                             )
                         }
                     } catch (error: CancellationException) {
@@ -108,62 +108,57 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun pair(payload: String) =
-        runOperation {
-            mutableState.update { it.copy(connectionLabel = "登録要求を送信中") }
-            val pc =
-                repository.pair(payload) { code ->
-                    withContext(Dispatchers.Main.immediate) {
-                        mutableState.update {
-                            it.copy(
-                                comparisonCode = code,
-                                connectionLabel = "PCの番号を確認してPC側で承認してください"
-                            )
-                        }
+    fun pair(payload: String) = runOperation {
+        mutableState.update { it.copy(connectionLabel = "登録要求を送信中") }
+        val pc =
+            repository.pair(payload) { code ->
+                withContext(Dispatchers.Main.immediate) {
+                    mutableState.update {
+                        it.copy(
+                            comparisonCode = code,
+                            connectionLabel = "PCの番号を確認してPC側で承認してください"
+                        )
                     }
                 }
-            mutableState.update { it.copy(pcs = repository.saved()) }
-            loadRemote(pc, "")
-        }
-
-    fun connect(pc: SavedPc) =
-        runOperation {
-            repository.connect(pc)
-            loadRemote(pc, "")
-        }
-
-    fun refreshFiles() =
-        runOperation {
-            val pc = activePc() ?: error("PC_NOT_CONNECTED")
-            loadRemote(pc, state.value.currentPath)
-        }
-
-    fun openDirectory(entry: FileEntry) =
-        runOperation {
-            check(entry.kind == "directory") { "NOT_A_DIRECTORY" }
-            val pc = activePc() ?: error("PC_NOT_CONNECTED")
-            val share = state.value.share ?: error("SHARE_NOT_AVAILABLE")
-            RemotePathRules.validate(entry.relativePath)
-            val entries = fileRepository.listEntries(pc, share.id, entry.relativePath)
-            mutableState.update {
-                it.copy(
-                    entries = entries,
-                    currentPath = entry.relativePath,
-                    connectionLabel = "${pc.displayName} を参照中"
-                )
             }
-        }
+        mutableState.update { it.copy(pcs = repository.saved()) }
+        loadRemote(pc, "")
+    }
 
-    fun goUp() =
-        runOperation {
-            val pc = activePc() ?: error("PC_NOT_CONNECTED")
-            val share = state.value.share ?: error("SHARE_NOT_AVAILABLE")
-            val parent = RemotePathRules.parent(state.value.currentPath)
-            val entries = fileRepository.listEntries(pc, share.id, parent)
-            mutableState.update {
-                it.copy(entries = entries, currentPath = parent)
-            }
+    fun connect(pc: SavedPc) = runOperation {
+        repository.connect(pc)
+        loadRemote(pc, "")
+    }
+
+    fun refreshFiles() = runOperation {
+        val pc = activePc() ?: error("PC_NOT_CONNECTED")
+        loadRemote(pc, state.value.currentPath)
+    }
+
+    fun openDirectory(entry: FileEntry) = runOperation {
+        check(entry.kind == "directory") { "NOT_A_DIRECTORY" }
+        val pc = activePc() ?: error("PC_NOT_CONNECTED")
+        val share = state.value.share ?: error("SHARE_NOT_AVAILABLE")
+        RemotePathRules.validate(entry.relativePath)
+        val entries = fileRepository.listEntries(pc, share.id, entry.relativePath)
+        mutableState.update {
+            it.copy(
+                entries = entries,
+                currentPath = entry.relativePath,
+                connectionLabel = "${pc.displayName} を参照中"
+            )
         }
+    }
+
+    fun goUp() = runOperation {
+        val pc = activePc() ?: error("PC_NOT_CONNECTED")
+        val share = state.value.share ?: error("SHARE_NOT_AVAILABLE")
+        val parent = RemotePathRules.parent(state.value.currentPath)
+        val entries = fileRepository.listEntries(pc, share.id, parent)
+        mutableState.update {
+            it.copy(entries = entries, currentPath = parent)
+        }
+    }
 
     fun upload(uri: Uri) {
         val current = state.value
@@ -212,23 +207,22 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun forget(pc: SavedPc) =
-        runOperation {
-            repository.forget(pc.deviceId)
-            mutableState.update { current ->
-                val active = current.activePcId == pc.deviceId
-                current.copy(
-                    pcs = repository.saved(),
-                    activePcId = if (active) null else current.activePcId,
-                    share = if (active) null else current.share,
-                    entries = if (active) emptyList() else current.entries,
-                    currentPath = if (active) "" else current.currentPath,
-                    connectionLabel =
-                        "スマホの登録情報を削除しました。" +
-                            "再登録前にPC側でも端末を解除してください。"
-                )
-            }
+    fun forget(pc: SavedPc) = runOperation {
+        repository.forget(pc.deviceId)
+        mutableState.update { current ->
+            val active = current.activePcId == pc.deviceId
+            current.copy(
+                pcs = repository.saved(),
+                activePcId = if (active) null else current.activePcId,
+                share = if (active) null else current.share,
+                entries = if (active) emptyList() else current.entries,
+                currentPath = if (active) "" else current.currentPath,
+                connectionLabel =
+                "スマホの登録情報を削除しました。" +
+                    "再登録前にPC側でも端末を解除してください。"
+            )
         }
+    }
 
     fun cancel() {
         if (state.value.transfer is TransferServiceState.Running) {
@@ -243,7 +237,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 comparisonCode = null,
                 connectionLabel =
-                    "中止しました。PC側で承認済みの場合はPCの端末一覧から解除してください。"
+                "中止しました。PC側で承認済みの場合はPCの端末一覧から解除してください。"
             )
         }
     }
@@ -258,7 +252,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     entries = emptyList(),
                     currentPath = "",
                     connectionLabel =
-                        "${pc.displayName} に接続しました（PC側の受信フォルダは未設定です）"
+                    "${pc.displayName} に接続しました（PC側の受信フォルダは未設定です）"
                 )
             }
             return
@@ -283,7 +277,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private fun runOperation(block: suspend () -> Unit) {
         if (
             operation?.isCompleted == false ||
-                state.value.transfer is TransferServiceState.Running
+            state.value.transfer is TransferServiceState.Running
         ) {
             return
         }
@@ -296,7 +290,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     mutableState.update {
                         it.copy(
                             connectionLabel =
-                                "登録の有効期限が切れました。PCで新しいQRを表示してください。"
+                            "登録の有効期限が切れました。PCで新しいQRを表示してください。"
                         )
                     }
                 } catch (error: CancellationException) {
@@ -311,8 +305,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     mutableState.update {
                         it.copy(
                             connectionLabel =
-                                "接続または保存に失敗しました。LANとQR期限を確認してください。" +
-                                    "再登録する場合はPC側の登録を解除してください。"
+                            "接続または保存に失敗しました。LANとQR期限を確認してください。" +
+                                "再登録する場合はPC側の登録を解除してください。"
                         )
                     }
                 } finally {

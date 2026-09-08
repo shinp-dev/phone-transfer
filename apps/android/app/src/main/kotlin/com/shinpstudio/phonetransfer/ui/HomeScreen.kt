@@ -56,10 +56,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
     Column(
         modifier =
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Phone Transfer", style = MaterialTheme.typography.headlineMedium)
@@ -184,7 +184,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             (
                                 transfer.transferredBytes.coerceAtMost(transfer.totalBytes) * 100 /
                                     transfer.totalBytes
-                            )
+                                )
                         "$action中: $percent% (${transfer.transferredBytes} / ${transfer.totalBytes} bytes)"
                     } else {
                         "$actionを準備中"
