@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated: 2026-09-07
+Updated: 2026-09-08
 
 See [development handoff](handoff.md) for the checkpoint scope and exact continuation order. This checkpoint may be merged to main before the MVP is complete.
 
@@ -10,29 +10,29 @@ Implemented: monorepo, layer boundaries, tray/Compose startup shells, OpenAPI wi
 
 All Phase 1 gates passed at `38983e90ea191faabacdcd12ab85f2d44f48127e`: Android build/unit tests/lint/Spotless, Windows build/46 tests/format, protocol validation/generated model checks and diff whitespace checks. [CI evidence](https://github.com/shinp-dev/phone-transfer/actions/runs/34145840930). Android upgrade notices remain informational as documented in ADR 011.
 
-## Phase 2 — Android pairing implemented; physical acceptance and mDNS pending
+## Phase 2 — pairing and mDNS implemented; physical acceptance pending
 
 Implemented as application components: a single-active QR challenge store (256-bit randomness, monotonic 120-second expiry, single use, atomic callback, replacement/invalidation and redacted ToString), and bounded ECDSA P-256 certificate proof verification. Verification binds the display name, device UUID, QR token and certificate fingerprint. It rejects invalid validity/usage/curve/encoding and does not fetch certificate-chain resources.
 
-The cryptographic primitives passed fifteen added test cases. New in this increment: local approval coordinator, signature-authorized status polling, isolated HTTPS pairing host with body/concurrency/rate limits, SQLite device registration and revocation, current-user non-exportable CNG certificate adapter. New integration tests cover real HTTPS submission → local approval → mTLS info → pooled-connection revocation, persistent state, policy expiry and malformed/oversized/rate-limited input. These backend changes passed Windows, Android and protocol CI at `507862cd10767922aca57b8cff1d0a46ad742ac0`: [CI evidence](https://github.com/shinp-dev/phone-transfer/actions/runs/34146429559).
+The cryptographic primitives passed fifteen added test cases. The Windows backend includes the local approval coordinator, signature-authorized status polling, isolated HTTPS pairing host with body/concurrency/rate limits, SQLite device registration and revocation, current-user non-exportable CNG certificate adapter, tray/runtime composition and bounded shutdown. Android includes QR validation, offline scanning, Keystore identity, pinned HTTPS registration, signed polling, comparison-code UI, mTLS info verification before atomic persistence, connection checks and local removal.
 
-The next increment composes the production Windows runtime into the tray: LAN adapter selection, QR rendering, explicit comparison-code approval, durable device listing/revocation, and bounded host shutdown. Closing the QR denies unapproved requests while preserving a completed status receipt until its original expiry. Added tests exercise that lifecycle and production CNG-backed TLS across a host restart. Windows build, format and all 57 tests passed at `052056b` ([CI](https://github.com/shinp-dev/phone-transfer/actions/runs/34164986068)). Final Android and merge checks are recorded on [PR #1](https://github.com/shinp-dev/phone-transfer/pull/1). Android now has a separately tested QR validation boundary (strict version/identity/token/expiry, numeric private IPv4 HTTPS endpoints on the same host, no credentials/path/query or untrusted DNS). PR #2 connects this validator to an offline QR scanner, Keystore identity, pinned HTTPS registration, signed polling, comparison-code UI, and mTLS info verification before atomic PC persistence. Saved PCs can be checked or removed locally. Removal does not revoke the Android certificate on Windows; re-pairing requires Windows-side revocation. Redirects, proxies and cleartext fallback are disabled. Cancellation cancels the OkHttp call, but cannot undo approval already performed on the PC.
+The Android saved-PC store is application-singleton owned and updates its last-known endpoint atomically. Production mDNS is now wired: Windows advertises `_phone-transfer._tcp` through the Windows DNS-SD API on the selected private IPv4 interface with only `version` and stable `deviceId` TXT values; Android uses `NsdManager` with a multicast lock and accepts only private IPv4 API endpoints on port 58443. A changed endpoint is persisted only after the stored SPKI pin, client certificate and `/api/v1/info` stable device ID all verify. Discovery remains untrusted and QR remains the trust bootstrap/fallback.
 
 ## Remaining Phase 2–6
 
-Remaining: production mDNS, physical Android-to-Windows pairing acceptance, share configuration, Windows handle-safe filesystem, transfer endpoints/records, upload/download/resume orchestration, Android SAF/foreground service/share intents, text/history UI and recovery scheduler. Host factories implement `/api/v1/info` and the two `/pairing/v1/requests` routes; remaining OpenAPI routes are design contracts.
+Remaining: physical Android-to-Windows pairing and mDNS acceptance, share configuration, Windows handle-safe filesystem, transfer endpoints/records, upload/download/resume orchestration, Android SAF/foreground service/share intents, text/history UI and recovery scheduler. Host factories implement `/api/v1/info` and the two `/pairing/v1/requests` routes; remaining OpenAPI routes are design contracts.
 
-The tray now starts the isolated bootstrap listener and the mTLS info listener on one selected private IPv4 LAN adapter. No file or text transfer route is implemented. Discovery currently enumerates local adapters only; remote mDNS discovery remains unimplemented.
+The tray starts the isolated bootstrap listener and the mTLS info listener on one selected private IPv4 LAN adapter and attempts DNS-SD advertisement without making it a prerequisite for the authenticated listeners. No file or text transfer route is implemented.
 
 ## Required physical-device acceptance
 
-Windows 11: initial launch/tray exit, private-network firewall, QR approval, non-exportable key, share junction replacement, revocation during streaming, disk-full/crash recovery, sleep/resume.
+Windows 11: initial launch/tray exit, private-network firewall, DNS-SD advertisement, QR approval, non-exportable key, share junction replacement, revocation during streaming, disk-full/crash recovery, sleep/resume.
 
-Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, ACTION_SEND/MULTIPLE content URIs, SAF providers (seekable and nonseekable), 4 GiB+ transfer, notification permission, screen-off, process kill, foreground-service timeout and Wi-Fi/DHCP change.
+Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, DHCP/Wi-Fi change rediscovery, ACTION_SEND/MULTIPLE content URIs, SAF providers (seekable and nonseekable), 4 GiB+ transfer, notification permission, screen-off, process kill and foreground-service timeout.
 
 ## Continuation order
 
-1. Complete the Windows tray/runtime integration-test gates.
-2. Verify Windows tray interaction on a physical machine.
-3. Add mDNS and verify DHCP rediscovery, alongside physical Android Keystore/pinned HTTPS/QR acceptance.
-4. Continue Phases 3–6 in the original order.
+1. Verify Windows tray, QR pairing and mDNS on physical Windows/Android devices, including a DHCP address change.
+2. Implement Phase 3 share configuration and handle-safe Windows file access.
+3. Add basic list/upload/download endpoints and Android SAF integration.
+4. Continue durable resume/recovery, background transfer and text/history in separate increments.
