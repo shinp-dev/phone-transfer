@@ -1,6 +1,7 @@
 package com.shinpstudio.phonetransfer
 
 import com.shinpstudio.phonetransfer.data.SavedPc
+import com.shinpstudio.phonetransfer.data.SavedPcPersistence
 import com.shinpstudio.phonetransfer.data.SavedPcRules
 import java.util.UUID
 import kotlinx.serialization.decodeFromString
@@ -26,6 +27,19 @@ class SavedPcRulesTest {
         assertTrue(encoded.contains("\"endpoint\""))
         assertFalse(encoded.contains("lastKnownEndpoint"))
         assertEquals(value, json.decodeFromString<SavedPc>(encoded))
+    }
+
+    @Test
+    fun persistenceReadsLegacyListAndWritesVersionedEnvelope() {
+        val json = Json { ignoreUnknownKeys = false }
+        val value = pc()
+        val legacy = json.encodeToString(listOf(value))
+        assertEquals(listOf(value), SavedPcPersistence.decode(legacy))
+
+        val encoded = SavedPcPersistence.encode(listOf(value))
+        assertTrue(encoded.contains("\"version\":1"))
+        assertTrue(encoded.contains("\"pcs\""))
+        assertEquals(listOf(value), SavedPcPersistence.decode(encoded))
     }
 
     @Test

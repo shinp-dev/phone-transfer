@@ -8,6 +8,7 @@ public interface IPairedDeviceRegistry
 {
     bool Register(VerifiedPairingIdentity identity, string certificateDer);
     PairedDevice? Authorize(X509Certificate2 certificate);
+    bool TryTouchLastSeen(PairedDevice device);
     IReadOnlyList<PairedDevice> List();
     bool Revoke(Guid deviceId);
 }

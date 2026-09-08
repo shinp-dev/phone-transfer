@@ -9,6 +9,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 
 @Serializable
 data class SavedPc(
@@ -55,8 +58,35 @@ internal object SavedPcRules {
     }
 }
 
-internal class SavedPcStore private constructor(context: Context) {
+@Serializable
+private data class SavedPcDocument(val version: Int, val pcs: List<SavedPc>)
+
+internal object SavedPcPersistence {
+    private const val VERSION = 1
     private val json = Json { ignoreUnknownKeys = false }
+
+    fun decode(text: String): List<SavedPc> {
+        val root = json.parseToJsonElement(text)
+        val pcs = when (root) {
+            is JsonArray -> json.decodeFromJsonElement<List<SavedPc>>(root)
+            is JsonObject -> {
+                val document = json.decodeFromJsonElement<SavedPcDocument>(root)
+                check(document.version == VERSION) { "SAVED_PC_VERSION" }
+                document.pcs
+            }
+            else -> error("SAVED_PC_FORMAT")
+        }
+        SavedPcRules.validate(pcs)
+        return pcs
+    }
+
+    fun encode(pcs: List<SavedPc>): String {
+        SavedPcRules.validate(pcs)
+        return json.encodeToString(SavedPcDocument(VERSION, pcs))
+    }
+}
+
+internal class SavedPcStore private constructor(context: Context) {
     private val file = AtomicFile(File(context.filesDir, "paired-pcs.json"))
 
     @Synchronized
@@ -87,14 +117,13 @@ internal class SavedPcStore private constructor(context: Context) {
     private fun readUnlocked(): List<SavedPc> {
         if (!file.baseFile.exists()) return emptyList()
         val text = file.openRead().use { it.readBytes().toString(Charsets.UTF_8) }
-        return json.decodeFromString<List<SavedPc>>(text).also(SavedPcRules::validate)
+        return SavedPcPersistence.decode(text)
     }
 
     private fun writeUnlocked(pcs: List<SavedPc>) {
-        SavedPcRules.validate(pcs)
         val output = file.startWrite()
         try {
-            output.write(json.encodeToString(pcs).toByteArray(Charsets.UTF_8))
+            output.write(SavedPcPersistence.encode(pcs).toByteArray(Charsets.UTF_8))
             file.finishWrite(output)
         } catch (error: Exception) {
             file.failWrite(output)

@@ -13,7 +13,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 
@@ -77,6 +76,8 @@ class NsdDiscovery(context: Context) {
                     resolved.host?.hostAddress,
                     resolved.port
                 ) ?: continue
+                // Do not deduplicate before authentication. A transient TLS/network failure must be retryable
+                // when Android reports the same service again.
                 trySend(candidate)
             }
         }
@@ -122,7 +123,7 @@ class NsdDiscovery(context: Context) {
             }
             if (multicastLock.isHeld) multicastLock.release()
         }
-    }.distinctUntilChanged()
+    }
 
     @SuppressLint("Deprecation")
     @Suppress("DEPRECATION")

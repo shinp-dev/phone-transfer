@@ -45,7 +45,7 @@ public sealed class PairingApiIntegrationTests : IDisposable
         var coordinator = new PairingCoordinator(registry, TimeProvider.System);
         await using var bootstrap = PairingHost.Create(coordinator, serverCertificate, IPAddress.Loopback, 0);
         await using var transfer = ServerHost.Create(new Identity(), serverCertificate,
-            certificate => registry.Authorize(certificate) is not null, IPAddress.Loopback, 0);
+            registry.Authorize, IPAddress.Loopback, 0, device => registry.TryTouchLastSeen(device));
         await bootstrap.StartAsync();
         await transfer.StartAsync();
         using (var notPaired = Client(transfer, serverCertificate, phoneCertificate))

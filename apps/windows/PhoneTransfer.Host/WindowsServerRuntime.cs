@@ -37,7 +37,8 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         certificate = new WindowsServerCertificate().GetOrCreate(identity.DeviceId);
         Pairing = new PairingCoordinator(devices, TimeProvider.System);
         bootstrap = PairingHost.Create(Pairing, certificate, address, BootstrapPort);
-        api = ServerHost.Create(identity, certificate, client => devices.Authorize(client) is not null, address, ApiPort);
+        api = ServerHost.Create(identity, certificate, devices.Authorize, address, ApiPort,
+            device => devices.TryTouchLastSeen(device));
     }
 
     public static async Task<WindowsServerRuntime> StartAsync(string directory, IPAddress address, CancellationToken token)
@@ -47,7 +48,7 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         {
             await runtime.api.StartAsync(token).ConfigureAwait(false);
             await runtime.bootstrap.StartAsync(token).ConfigureAwait(false);
-            runtime.StartMdns();
+            await runtime.StartMdnsAsync(token).ConfigureAwait(false);
             return runtime;
         }
         catch
@@ -57,22 +58,45 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         }
     }
 
-    private void StartMdns()
+    private async Task StartMdnsAsync(CancellationToken token)
     {
         var interfaceIndex = LanAdapters.FindInterfaceIndex(address);
         var advertisement = interfaceIndex is uint index
             ? MdnsAdvertisement.Create(identity.DeviceId, address, ApiPort, index)
             : null;
         if (advertisement is null) return;
+
+        WindowsMdnsAdvertiser candidate;
         try
         {
-            mdns = WindowsMdnsAdvertiser.Start(advertisement);
+            candidate = WindowsMdnsAdvertiser.Start(advertisement);
         }
         catch (Exception exception) when (exception is Win32Exception or DllNotFoundException or EntryPointNotFoundException)
         {
             // QR/manual endpoints remain available on networks or Windows builds where DNS-SD cannot advertise.
-            mdns = null;
+            return;
         }
+
+        try
+        {
+            var status = await candidate.Registration.WaitAsync(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
+            if (status == 0)
+            {
+                mdns = candidate;
+                return;
+            }
+        }
+        catch (TimeoutException)
+        {
+            // Do not report mDNS as available until Windows confirms registration.
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            await candidate.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        await candidate.DisposeAsync().ConfigureAwait(false);
     }
 
     public PairingQr NewQr()

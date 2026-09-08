@@ -10,6 +10,7 @@ namespace PhoneTransfer.Infrastructure.Persistence;
 
 public sealed class SqliteDeviceRegistry : IPairedDeviceRegistry
 {
+    private static readonly TimeSpan LastSeenWriteInterval = TimeSpan.FromMinutes(1);
     private readonly string connectionString;
     private readonly TimeProvider clock;
 
@@ -82,19 +83,41 @@ public sealed class SqliteDeviceRegistry : IPairedDeviceRegistry
         if (now < certificate.NotBefore.ToUniversalTime() || now >= certificate.NotAfter.ToUniversalTime()) return null;
         var digest = Convert.ToHexStringLower(certificate.GetCertHash(HashAlgorithmName.SHA256));
         using var connection = Open();
-        using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
-        command.Transaction = transaction;
         command.CommandText = """
-            UPDATE devices SET last_seen_at=$now WHERE certificate_sha256=$hash AND revoked=0
-            RETURNING device_id, display_name, certificate_sha256, registered_at, last_seen_at, permissions, revoked;
+            SELECT device_id, display_name, certificate_sha256, registered_at, last_seen_at, permissions, revoked
+            FROM devices WHERE certificate_sha256=$hash AND revoked=0 LIMIT 1;
             """;
         command.Parameters.AddWithValue("$hash", digest);
-        command.Parameters.AddWithValue("$now", now.ToString("O"));
-        PairedDevice? device;
-        using (var reader = command.ExecuteReader()) device = reader.Read() ? ReadDevice(reader) : null;
-        transaction.Commit();
-        return device;
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadDevice(reader) : null;
+    }
+
+    public bool TryTouchLastSeen(PairedDevice device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        var now = clock.GetUtcNow();
+        if (device.Revoked || now <= device.LastSeenAt || now - device.LastSeenAt < LastSeenWriteInterval) return false;
+
+        try
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE devices SET last_seen_at=$now
+                WHERE device_id=$id AND certificate_sha256=$hash AND revoked=0 AND last_seen_at=$previous;
+                """;
+            command.Parameters.AddWithValue("$id", device.DeviceId.ToString("D"));
+            command.Parameters.AddWithValue("$hash", device.CertificateSha256);
+            command.Parameters.AddWithValue("$previous", device.LastSeenAt.ToString("O"));
+            command.Parameters.AddWithValue("$now", now.ToString("O"));
+            return command.ExecuteNonQuery() == 1;
+        }
+        catch (SqliteException)
+        {
+            // last-seen telemetry must not make an otherwise authorized API request unavailable.
+            return false;
+        }
     }
 
     public IReadOnlyList<PairedDevice> List()
