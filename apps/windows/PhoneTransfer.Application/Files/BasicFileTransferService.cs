@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using PhoneTransfer.Domain;
 
 namespace PhoneTransfer.Application.Files;
@@ -49,6 +48,8 @@ public sealed class BasicFileTransferService : IDisposable
     private readonly TimeProvider clock;
     private readonly Dictionary<Guid, TransferRecord> transfers = [];
     private readonly Dictionary<(Guid DeviceId, Guid IdempotencyKey), Guid> idempotency = [];
+    private string? currentShareRoot;
+    private Guid currentShareId;
     private bool disposed;
 
     public BasicFileTransferService(
@@ -295,6 +296,35 @@ public sealed class BasicFileTransferService : IDisposable
         }
     }
 
+    public int CancelDevice(Guid deviceId)
+    {
+        if (deviceId == Guid.Empty) throw new ArgumentException("Device ID must not be empty.", nameof(deviceId));
+        lock (gate)
+        {
+            CheckOpen();
+            var cancelled = 0;
+            Exception? cleanupError = null;
+            foreach (var transfer in transfers.Values)
+            {
+                if (transfer.OwnerDeviceId != deviceId || IsTerminal(transfer.State)) continue;
+                transfer.State = TransferState.Cancelled;
+                transfer.UpdatedAt = clock.GetUtcNow();
+                try
+                {
+                    CleanupResources(transfer);
+                }
+                catch (IOException exception)
+                {
+                    cleanupError ??= exception;
+                }
+                cancelled++;
+            }
+            if (cleanupError is not null)
+                throw new IOException("REVOKED_DEVICE_STAGING_CLEANUP_FAILED", cleanupError);
+            return cancelled;
+        }
+    }
+
     public DownloadLease OpenDownload(PairedDevice device, Guid shareId, RelativeSharePath path)
     {
         var configuration = ResolveShare(device, shareId, DevicePermissions.Download);
@@ -375,10 +405,18 @@ public sealed class BasicFileTransferService : IDisposable
             throw new BasicFileTransferException("INVALID_IDEMPOTENCY_KEY", "The idempotency key must not be empty.");
     }
 
-    private static Guid GetShareId(ShareConfiguration configuration)
+    private Guid GetShareId(ShareConfiguration configuration)
     {
-        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(configuration.RootPath.ToUpperInvariant()));
-        return new Guid(digest.AsSpan(0, 16));
+        lock (gate)
+        {
+            CheckOpen();
+            if (currentShareId == Guid.Empty || !string.Equals(currentShareRoot, configuration.RootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                currentShareRoot = configuration.RootPath;
+                currentShareId = Guid.NewGuid();
+            }
+            return currentShareId;
+        }
     }
 
     private TransferRecord OwnedTransfer(PairedDevice device, Guid transferId)
