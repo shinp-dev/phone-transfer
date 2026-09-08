@@ -69,18 +69,15 @@ object UploadRecoveryRules {
         actualFileName: String,
         actualSize: Long,
         actualSha256: String
-    ): Boolean =
-        expected.fileName == actualFileName &&
-            expected.totalSize == actualSize &&
-            expected.sha256 == actualSha256
+    ): Boolean = expected.fileName == actualFileName &&
+        expected.totalSize == actualSize &&
+        expected.sha256 == actualSha256
 
-    private fun validLocal(local: LocalUploadCheckpoint): Boolean =
-        local.totalSize >= 0 &&
-            local.committedOffset in 0..local.totalSize &&
-            local.sha256.matches(Regex("[a-f0-9]{64}"))
+    private fun validLocal(local: LocalUploadCheckpoint): Boolean = local.totalSize >= 0 &&
+        local.committedOffset in 0..local.totalSize &&
+        local.sha256.matches(Regex("[a-f0-9]{64}"))
 
-    private fun validServer(server: ServerUploadStatus): Boolean =
-        server.totalSize >= 0 &&
-            server.committedOffset in 0..server.totalSize &&
-            server.sha256.matches(Regex("[a-f0-9]{64}"))
+    private fun validServer(server: ServerUploadStatus): Boolean = server.totalSize >= 0 &&
+        server.committedOffset in 0..server.totalSize &&
+        server.sha256.matches(Regex("[a-f0-9]{64}"))
 }

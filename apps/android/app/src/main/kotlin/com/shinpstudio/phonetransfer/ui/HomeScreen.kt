@@ -59,10 +59,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
     Column(
         modifier =
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Phone Transfer", style = MaterialTheme.typography.headlineMedium)

@@ -132,7 +132,11 @@ class FileTransferService : Service() {
                     } else if (current != null) {
                         val converged = terminalize(current)
                         if (!converged) {
-                            publishResumable(current, "CANCEL_PENDING_${error.code}", canResume = false)
+                            publishResumable(
+                                current,
+                                "CANCEL_PENDING_${error.code}",
+                                canResume = false
+                            )
                         } else {
                             TransferStatusBus.fail(currentOperation, kind, error.code)
                         }
@@ -238,16 +242,17 @@ class FileTransferService : Service() {
         }
     }
 
-    private suspend fun runUpload(
-        initial: PersistedTransferOperation,
-        pc: SavedPc,
-        uri: Uri
-    ) {
+    private suspend fun runUpload(initial: PersistedTransferOperation, pc: SavedPc, uri: Uri) {
         val repository = DurableUploadRepository(this)
         var current = initial
         val source = repository.inspectSource(uri)
         current = bindAndValidateSource(current, source)
-        publishProgress(current.operationId, TransferKind.Upload, current.committedOffset, source.size)
+        publishProgress(
+            current.operationId,
+            TransferKind.Upload,
+            current.committedOffset,
+            source.size
+        )
 
         val server =
             if (current.serverTransferId == null) {
@@ -317,13 +322,12 @@ class FileTransferService : Service() {
         }
     }
 
-    private suspend fun runDownload(
-        operation: PersistedTransferOperation,
-        pc: SavedPc,
-        uri: Uri
-    ) {
+    private suspend fun runDownload(operation: PersistedTransferOperation, pc: SavedPc, uri: Uri) {
         val repository = FileTransferRepository(this)
-        val result = repository.download(pc, operation.shareId, operation.remotePath, uri) { done, total ->
+        val result = repository.download(pc, operation.shareId, operation.remotePath, uri) {
+                done,
+                total
+            ->
             publishProgress(operation.operationId, TransferKind.Download, done, total)
         }
         finishSuccess(operation, result.fileName)
@@ -357,17 +361,16 @@ class FileTransferService : Service() {
     private fun reconcile(
         operation: PersistedTransferOperation,
         server: Transfer
-    ): UploadRecoveryDecision =
-        UploadRecoveryRules.reconcile(
-            operation.localCheckpoint(),
-            ServerUploadStatus(
-                server.fileName,
-                server.totalSize,
-                server.sha256,
-                server.transferredBytes,
-                server.status
-            )
+    ): UploadRecoveryDecision = UploadRecoveryRules.reconcile(
+        operation.localCheckpoint(),
+        ServerUploadStatus(
+            server.fileName,
+            server.totalSize,
+            server.sha256,
+            server.transferredBytes,
+            server.status
         )
+    )
 
     private fun PersistedTransferOperation.localCheckpoint(): LocalUploadCheckpoint =
         LocalUploadCheckpoint(
@@ -449,17 +452,16 @@ class FileTransferService : Service() {
         }
     }
 
-    private fun persist(operation: PersistedTransferOperation): PersistedTransferOperation =
-        try {
-            operationStore.replace(operation)
-        } catch (error: Exception) {
-            throw FileTransferException(
-                "LOCAL_JOURNAL_UNAVAILABLE",
-                true,
-                "The transfer checkpoint could not be persisted.",
-                error
-            )
-        }
+    private fun persist(operation: PersistedTransferOperation): PersistedTransferOperation = try {
+        operationStore.replace(operation)
+    } catch (error: Exception) {
+        throw FileTransferException(
+            "LOCAL_JOURNAL_UNAVAILABLE",
+            true,
+            "The transfer checkpoint could not be persisted.",
+            error
+        )
+    }
 
     private fun requireOperation(operationId: String): PersistedTransferOperation =
         safeFind(operationId)
@@ -469,12 +471,11 @@ class FileTransferService : Service() {
                 "The interrupted transfer no longer exists."
             )
 
-    private fun safeFind(operationId: String): PersistedTransferOperation? =
-        try {
-            operationStore.find(operationId)
-        } catch (_: Exception) {
-            null
-        }
+    private fun safeFind(operationId: String): PersistedTransferOperation? = try {
+        operationStore.find(operationId)
+    } catch (_: Exception) {
+        null
+    }
 
     private fun requirePersistedGrant(operation: PersistedTransferOperation, uri: Uri) {
         if (!hasPersistedGrant(uri, grantFlag(operation.kind))) {
@@ -498,7 +499,8 @@ class FileTransferService : Service() {
 
     private suspend fun terminalize(operation: PersistedTransferOperation): Boolean {
         val marked = try {
-            operationStore.requestCancel(operation.operationId, System.currentTimeMillis()) ?: operation
+            operationStore.requestCancel(operation.operationId, System.currentTimeMillis())
+                ?: operation
         } catch (_: Exception) {
             return false
         }

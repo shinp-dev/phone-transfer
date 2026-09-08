@@ -110,13 +110,17 @@ internal object TransferOperationPersistence {
     fun encode(operations: List<PersistedTransferOperation>): String {
         validate(operations)
         val encoded = json.encodeToString(TransferOperationDocument(VERSION, operations))
-        check(encoded.toByteArray(Charsets.UTF_8).size <= MAX_BYTES) { "TRANSFER_JOURNAL_TOO_LARGE" }
+        check(encoded.toByteArray(Charsets.UTF_8).size <= MAX_BYTES) {
+            "TRANSFER_JOURNAL_TOO_LARGE"
+        }
         return encoded
     }
 
     fun decode(bytes: ByteArray): List<PersistedTransferOperation> {
         check(bytes.size <= MAX_BYTES) { "TRANSFER_JOURNAL_TOO_LARGE" }
-        val document = json.decodeFromString<TransferOperationDocument>(bytes.toString(Charsets.UTF_8))
+        val document = json.decodeFromString<TransferOperationDocument>(
+            bytes.toString(Charsets.UTF_8)
+        )
         check(document.version == VERSION) { "TRANSFER_JOURNAL_VERSION" }
         validate(document.operations)
         return document.operations
@@ -142,15 +146,21 @@ internal object TransferOperationPersistence {
         check(previous.shareId == next.shareId) { "TRANSFER_OPERATION_SHARE_CHANGED" }
         check(previous.remotePath == next.remotePath) { "TRANSFER_OPERATION_PATH_CHANGED" }
         check(previous.uri == next.uri) { "TRANSFER_OPERATION_URI_CHANGED" }
-        check(previous.idempotencyKey == next.idempotencyKey) { "TRANSFER_OPERATION_IDEMPOTENCY_CHANGED" }
-        check(!previous.persistedGrant || next.persistedGrant) { "TRANSFER_OPERATION_GRANT_REGRESSED" }
+        check(previous.idempotencyKey == next.idempotencyKey) {
+            "TRANSFER_OPERATION_IDEMPOTENCY_CHANGED"
+        }
+        check(!previous.persistedGrant || next.persistedGrant) {
+            "TRANSFER_OPERATION_GRANT_REGRESSED"
+        }
         if (previous.sourceName != null) {
             check(previous.sourceName == next.sourceName) { "TRANSFER_SOURCE_NAME_CHANGED" }
             check(previous.totalSize == next.totalSize) { "TRANSFER_SOURCE_SIZE_CHANGED" }
             check(previous.sha256 == next.sha256) { "TRANSFER_SOURCE_HASH_CHANGED" }
         }
         if (previous.serverTransferId != null) {
-            check(previous.serverTransferId == next.serverTransferId) { "SERVER_TRANSFER_ID_CHANGED" }
+            check(previous.serverTransferId == next.serverTransferId) {
+                "SERVER_TRANSFER_ID_CHANGED"
+            }
         }
         check(next.committedOffset >= previous.committedOffset) { "LOCAL_OFFSET_REGRESSED" }
         val merged = if (previous.cancelRequested) next.copy(cancelRequested = true) else next
@@ -179,7 +189,14 @@ internal object TransferOperationPersistence {
         requireUuid(idempotency, "INVALID_IDEMPOTENCY_KEY")
         operation.serverTransferId?.let { requireUuid(it, "INVALID_TRANSFER_ID") }
 
-        val metadataCount = listOf(operation.sourceName, operation.totalSize, operation.sha256).count { it != null }
+        val metadataCount = listOf(
+            operation.sourceName,
+            operation.totalSize,
+            operation.sha256
+        ).count {
+            it !=
+                null
+        }
         check(metadataCount == 0 || metadataCount == 3) { "INCOMPLETE_SOURCE_METADATA" }
         if (metadataCount == 0) {
             check(operation.serverTransferId == null && operation.committedOffset == 0L) {
@@ -202,7 +219,9 @@ internal object TransferOperationPersistence {
         check(operation.idempotencyKey == null && operation.serverTransferId == null) {
             "DOWNLOAD_SERVER_STATE_UNEXPECTED"
         }
-        check(operation.sourceName == null && operation.totalSize == null && operation.sha256 == null) {
+        check(
+            operation.sourceName == null && operation.totalSize == null && operation.sha256 == null
+        ) {
             "DOWNLOAD_SOURCE_METADATA_UNEXPECTED"
         }
         check(operation.committedOffset == 0L) { "DOWNLOAD_OFFSET_UNSUPPORTED" }
@@ -237,7 +256,9 @@ internal class TransferOperationStore private constructor(context: Context) {
             check(existing == operation) { "TRANSFER_OPERATION_ID_CONFLICT" }
             return existing
         }
-        check(current.size < TransferOperationPersistence.MAX_OPERATIONS) { "TRANSFER_OPERATION_LIMIT" }
+        check(current.size < TransferOperationPersistence.MAX_OPERATIONS) {
+            "TRANSFER_OPERATION_LIMIT"
+        }
         writeUnlocked(current + operation)
         return operation
     }

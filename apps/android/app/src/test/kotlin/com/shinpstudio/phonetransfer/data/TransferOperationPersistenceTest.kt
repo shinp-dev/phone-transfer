@@ -182,16 +182,15 @@ class TransferOperationPersistenceTest {
         return TransferOperationPersistence.decode(encoded).single()
     }
 
-    private fun upload(): PersistedTransferOperation =
-        PersistedTransferOperation.upload(
-            UUID.randomUUID().toString(),
-            UUID.randomUUID().toString(),
-            UUID.randomUUID().toString(),
-            "incoming",
-            "content://provider/document/source",
-            UUID.randomUUID().toString(),
-            1
-        )
+    private fun upload(): PersistedTransferOperation = PersistedTransferOperation.upload(
+        UUID.randomUUID().toString(),
+        UUID.randomUUID().toString(),
+        UUID.randomUUID().toString(),
+        "incoming",
+        "content://provider/document/source",
+        UUID.randomUUID().toString(),
+        1
+    )
 
     companion object {
         private const val HASH = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
