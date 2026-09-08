@@ -27,6 +27,8 @@ sealed interface TransferServiceState {
         val canResume: Boolean = true
     ) : TransferServiceState
 
+    data class RecoveryBlocked(val code: String) : TransferServiceState
+
     data class Completed(val operationId: String, val kind: TransferKind, val fileName: String) :
         TransferServiceState
 
@@ -41,7 +43,12 @@ object TransferStatusBus {
     val state = mutableState.asStateFlow()
 
     fun begin(operationId: String, kind: TransferKind) {
+        if (mutableState.value is TransferServiceState.RecoveryBlocked) return
         mutableState.value = TransferServiceState.Running(operationId, kind, 0, 0)
+    }
+
+    fun recoveryBlocked(code: String) {
+        mutableState.value = TransferServiceState.RecoveryBlocked(code)
     }
 
     fun progress(operationId: String, kind: TransferKind, transferred: Long, total: Long) {
@@ -61,6 +68,7 @@ object TransferStatusBus {
         canResume: Boolean = true
     ) {
         val current = mutableState.value
+        if (current is TransferServiceState.RecoveryBlocked) return
         if (
             current is TransferServiceState.Running && current.operationId != operationId ||
             current is TransferServiceState.Resumable && current.operationId != operationId
