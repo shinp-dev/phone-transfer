@@ -24,6 +24,18 @@ Windows can select, persist and clear one receive-folder root without exposing i
 
 No list/upload/download route is enabled by this setting. File APIs remain disabled until handle-based containment and adversarial junction/reparse tests pass.
 
+## Post-PR5 audit hardening
+
+The first whole-repository review after PR #5 found no critical/high issue that required rolling back the merged checkpoint. The low-risk findings that can be closed before file-transfer work are implemented in the audit hardening branch:
+
+- paired-device authorization is a read-only SQLite lookup; `last_seen_at` is updated separately, at most once per minute per observed row, and failure to update that telemetry does not authorize a revoked device;
+- the Windows runtime reports mDNS as available only after the asynchronous Windows DNS-SD registration callback confirms success;
+- Android does not suppress an identical NSD candidate before it has been authenticated, allowing retry after transient TLS/network failure;
+- Android saved-PC persistence now writes a versioned envelope while continuing to read the pre-versioning list format and retaining the serialized `endpoint` field for compatibility;
+- Windows Forms code consumes LAN adapter discovery through the Host boundary rather than directly referencing Infrastructure discovery types.
+
+Operational/release hardening still outside this code increment: protect `main` with required PR/CI checks, decide and enforce the explicit Windows private-data ACL policy before staging files are introduced, and optionally pin third-party GitHub Actions to immutable commit SHAs.
+
 ## Remaining Phase 2–6
 
 Remaining: physical Android-to-Windows pairing and mDNS acceptance, Windows handle-safe filesystem, transfer endpoints/records, upload/download/resume orchestration, Android SAF/foreground service/share intents, text/history UI and recovery scheduler. Host factories implement `/api/v1/info` and the two `/pairing/v1/requests` routes; remaining OpenAPI routes are design contracts.
