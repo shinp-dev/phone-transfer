@@ -2,7 +2,7 @@
 
 Updated: 2026-09-08
 
-See [development handoff](handoff.md) for the checkpoint scope and exact continuation order. This checkpoint may be merged to main before the MVP is complete.
+See [development handoff](handoff.md) for the current continuation order. This repository is still pre-MVP: authentication/discovery/share/filesystem foundations are implemented, but file/text transfer routes are not yet exposed.
 
 ## Phase 1 — complete
 
@@ -14,43 +14,50 @@ All Phase 1 gates passed at `38983e90ea191faabacdcd12ab85f2d44f48127e`: Android 
 
 Implemented as application components: a single-active QR challenge store (256-bit randomness, monotonic 120-second expiry, single use, atomic callback, replacement/invalidation and redacted ToString), and bounded ECDSA P-256 certificate proof verification. Verification binds the display name, device UUID, QR token and certificate fingerprint. It rejects invalid validity/usage/curve/encoding and does not fetch certificate-chain resources.
 
-The cryptographic primitives passed fifteen added test cases. The Windows backend includes the local approval coordinator, signature-authorized status polling, isolated HTTPS pairing host with body/concurrency/rate limits, SQLite device registration and revocation, current-user non-exportable CNG certificate adapter, tray/runtime composition and bounded shutdown. Android includes QR validation, offline scanning, Keystore identity, pinned HTTPS registration, signed polling, comparison-code UI, mTLS info verification before atomic persistence, connection checks and local removal.
+The Windows backend includes the local approval coordinator, signature-authorized status polling, isolated HTTPS pairing host with body/concurrency/rate limits, SQLite device registration and revocation, current-user non-exportable CNG certificate adapter, tray/runtime composition and bounded shutdown. Android includes QR validation, offline scanning, Keystore identity, pinned HTTPS registration, signed polling, comparison-code UI, mTLS info verification before atomic persistence, connection checks and local removal.
 
-The Android saved-PC store is application-singleton owned and updates its last-known endpoint atomically. Production mDNS is now wired: Windows advertises `_phone-transfer._tcp` through the Windows DNS-SD API on the selected private IPv4 interface with only `version` and stable `deviceId` TXT values; Android uses `NsdManager` with a multicast lock and accepts only private IPv4 API endpoints on port 58443. A changed endpoint is persisted only after the stored SPKI pin, client certificate and `/api/v1/info` stable device ID all verify. Discovery remains untrusted and QR remains the trust bootstrap/fallback.
+The Android saved-PC store is application-singleton owned and updates its last-known endpoint atomically. Production mDNS is wired: Windows advertises `_phone-transfer._tcp` through the Windows DNS-SD API on the selected private IPv4 interface with only `version` and stable `deviceId` TXT values; Android uses `NsdManager` with a multicast lock and accepts only private IPv4 API endpoints on port 58443. A changed endpoint is persisted only after the stored SPKI pin, client certificate and `/api/v1/info` stable device ID all verify. Discovery remains untrusted and QR remains the trust bootstrap/fallback.
 
-## Phase 3 — internal handle-safe filesystem adapter; transfer APIs disabled
+## Phase 3 — handle-safe filesystem foundation implemented; transfer APIs disabled
 
-Windows can select, persist and clear one receive-folder root without exposing it through the network API. The setting is versioned and stored separately from paired-device state. Configuration accepts only existing local NTFS/ReFS folders, rejects UNC paths, volume roots, overlap with the application's own data directory and reparse points in the selected path ancestry, and writes updates through a same-directory temporary file before replace/move. This is a configuration-time guard only; it is not a substitute for the handle-safe file adapter required by ADR 008.
+Windows can select, persist and clear one receive-folder root without exposing it through the network API. Configuration accepts only existing local NTFS/ReFS folders, rejects UNC paths, volume roots, overlap with the application's own data directory and reparse points in the selected path ancestry, and writes updates through a same-directory temporary file before replace/move. This is a configuration-time guard and remains independent from runtime containment.
 
-The standalone Windows adapter now provides pinned root/traversal, bounded handle-based listing, stable file reads, private ACL-protected staging and atomic no-overwrite completion. See ADR 008 for containment invariants, ownership, adversarial tests and filesystem coverage limits. Windows CI at `461b50df6da429831c6d5176efbad0790a351faa` passed format, Release build and 107 tests without skips; subsequent revisions must pass the same gates. See [PR #7](https://github.com/shinp-dev/phone-transfer/pull/7) for final CI evidence. No list/upload/download route is enabled; quotas, authorization orchestration, durable records and resume/recovery remain separate work.
+PR #7 added the standalone Windows handle-safe adapter: pinned root/traversal, bounded handle-based listing, stable file reads, private ACL-protected staging and atomic same-volume no-overwrite completion. It opens child components relative to retained directory handles and rejects reparse points/junctions/symlinks/hardlinks and replacement races fail-closed. See ADR 008 for containment invariants and ownership rules.
+
+Final PR #7 HEAD `f8bfd5ded9da2fb95bf1518feb9bdf1623589487` passed Windows format, Release build and **109 tests with 0 skipped**; protocol and Android regression jobs also passed. [CI evidence](https://github.com/shinp-dev/phone-transfer/actions/runs/34187016589). PR #7 is merged to main as `d0bc325bbf84b5e697557c3410b78bbf98fb1466`.
+
+No `/api/v1/shares`, entry listing, upload, download, transfer-state or text route is enabled yet. Quotas, authorization orchestration, durable transfer records and resume/recovery remain separate work.
 
 ## Post-PR5 audit hardening
 
-The first whole-repository review after PR #5 found no critical/high issue that required rolling back the merged checkpoint. The low-risk findings that can be closed before file-transfer work are implemented in the audit hardening branch:
+The whole-repository review after PR #5 found no critical/high issue requiring rollback. The low-risk findings closed before file-transfer work are:
 
-- paired-device authorization is a read-only SQLite lookup; `last_seen_at` is updated separately, at most once per minute per observed row, and failure to update that telemetry does not authorize a revoked device;
-- the Windows runtime reports mDNS as available only after the asynchronous Windows DNS-SD registration callback confirms success;
-- Android does not suppress an identical NSD candidate before it has been authenticated, allowing retry after transient TLS/network failure;
-- Android saved-PC persistence now writes a versioned envelope while continuing to read the pre-versioning list format and retaining the serialized `endpoint` field for compatibility;
-- Windows Forms code consumes LAN adapter discovery through the Host boundary rather than directly referencing Infrastructure discovery types.
+- paired-device authorization is read-only; `last_seen_at` telemetry is separate and throttled;
+- Windows reports mDNS available only after DNS-SD callback success;
+- Android allows retry of identical NSD candidates after transient authentication/network failure;
+- Android saved-PC persistence writes a versioned envelope while continuing to read the legacy list format;
+- Windows Forms consumes LAN adapter discovery through Host rather than directly reaching Infrastructure.
 
-Operational/release hardening still outside this code increment: protect `main` with required PR/CI checks, apply the explicit per-user ACL policy consistently to existing application-state stores (new staging already has an atomic protected current-user DACL), and optionally pin third-party GitHub Actions to immutable commit SHAs.
+The pre-transfer cleanup additionally updates Bouncy Castle from 1.83 to 1.85.2 and caps Android saved-PC persistence input at 128 KiB before JSON parsing.
+
+Operational/release hardening still outside this increment: protect `main` with required PR/CI checks, apply explicit per-user ACL policy consistently to existing application-state stores, and optionally pin third-party GitHub Actions to immutable commit SHAs.
 
 ## Remaining Phase 2–6
 
-Remaining: physical Android-to-Windows pairing and mDNS acceptance, transfer endpoints/records, upload/download/resume orchestration, Android SAF/foreground service/share intents, text/history UI and recovery scheduler. Host factories implement `/api/v1/info` and the two `/pairing/v1/requests` routes; remaining OpenAPI routes are design contracts.
+Remaining: physical Android-to-Windows pairing/mDNS acceptance, basic list/upload/download routes, Android SAF, durable resume/recovery, foreground/background transfer lifetime, text/history UI and recovery scheduler.
 
-The tray starts the isolated bootstrap listener and the mTLS info listener on one selected private IPv4 LAN adapter and attempts DNS-SD advertisement without making it a prerequisite for the authenticated listeners. No file or text transfer route is implemented.
+The tray starts the isolated bootstrap listener and the mTLS info listener on one selected private IPv4 LAN adapter and attempts DNS-SD advertisement without making it a prerequisite for authenticated listeners. Windows does not yet automatically rebind after DHCP/Wi-Fi adapter changes; the user can currently restart the connection from the tray UI.
 
 ## Required physical-device acceptance
 
-Windows 11: initial launch/tray exit, private-network firewall, DNS-SD advertisement, QR approval, non-exportable key, share junction replacement, revocation during streaming, disk-full/crash recovery, sleep/resume.
+Windows 11: initial launch/tray exit, private-network firewall, DNS-SD advertisement, QR approval, non-exportable key, DHCP/Wi-Fi change behavior, ReFS/real mounted-volume filesystem behavior, sleep/resume, and later revocation/disk-full/crash behavior during streaming.
 
-Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, DHCP/Wi-Fi change rediscovery, ACTION_SEND/MULTIPLE content URIs, SAF providers (seekable and nonseekable), 4 GiB+ transfer, notification permission, screen-off, process kill and foreground-service timeout.
+Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, DHCP/Wi-Fi rediscovery, ACTION_SEND/MULTIPLE content URIs, SAF providers (seekable and nonseekable), 4 GiB+ transfer, notification permission, screen-off, process kill and foreground-service timeout.
 
 ## Continuation order
 
-1. Verify Windows tray, QR pairing and mDNS on physical Windows/Android devices, including a DHCP address change.
-2. Accept the standalone Windows handle-safe adapter after Windows CI and review of ADR 008; keep network file routes disabled in this increment.
-3. Add basic list/upload/download endpoints and Android SAF integration.
-4. Continue durable resume/recovery, background transfer and text/history in separate increments.
+1. Merge the small pre-transfer cleanup after CI.
+2. Add basic authenticated share/list/upload/download endpoints using only the handle-safe filesystem adapter; keep resume/recovery out of this first transfer PR.
+3. Add Android SAF and transfer repository/service without expanding `PairingRepository` into transfer ownership.
+4. Implement durable resume/recovery, background lifetime and text/history in separate increments.
+5. Run physical Windows/Android acceptance throughout; do not treat CI alone as product acceptance.
