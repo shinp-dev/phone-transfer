@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using PhoneTransfer.Application;
+using PhoneTransfer.Domain;
 using PhoneTransfer.Host;
 using Xunit;
 
@@ -45,8 +46,13 @@ public class TlsIntegrationTests
         using var unknown = Certificate("unknown", false);
         var revoked = 0;
         var expected = allowed.GetCertHashString(HashAlgorithmName.SHA256);
+        var now = DateTimeOffset.UtcNow;
+        var device = new PairedDevice(Guid.NewGuid(), "phone", expected.ToLowerInvariant(), now, now,
+            DevicePermissions.All, false);
         await using var server = ServerHost.Create(new Identity(), serverCertificate,
-            cert => Volatile.Read(ref revoked) == 0 && cert.GetCertHashString(HashAlgorithmName.SHA256) == expected,
+            cert => Volatile.Read(ref revoked) == 0 && cert.GetCertHashString(HashAlgorithmName.SHA256) == expected
+                ? device
+                : null,
             IPAddress.Loopback, 0);
         await server.StartAsync();
         var address = server.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
