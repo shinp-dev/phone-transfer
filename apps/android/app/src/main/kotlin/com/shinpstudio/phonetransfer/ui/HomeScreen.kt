@@ -185,9 +185,9 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                                 transfer.transferredBytes.coerceAtMost(transfer.totalBytes) * 100 /
                                     transfer.totalBytes
                                 )
-                        "$action中: $percent% (${transfer.transferredBytes} / ${transfer.totalBytes} bytes)"
+                        "${action}中: $percent% (${transfer.transferredBytes} / ${transfer.totalBytes} bytes)"
                     } else {
-                        "$actionを準備中"
+                        "${action}を準備中"
                     }
                 Text(progress)
                 Text("転送はForeground Serviceが所有します。画面を切り替えても処理を継続します。")
