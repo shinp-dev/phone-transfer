@@ -14,9 +14,22 @@ import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.net.toUri
 import com.shinpstudio.phonetransfer.R
+import com.shinpstudio.phonetransfer.data.DurableTransferKind
+import com.shinpstudio.phonetransfer.data.DurableUploadRepository
+import com.shinpstudio.phonetransfer.data.DurableUploadSource
 import com.shinpstudio.phonetransfer.data.FileTransferException
 import com.shinpstudio.phonetransfer.data.FileTransferRepository
+import com.shinpstudio.phonetransfer.data.PairingRepository
+import com.shinpstudio.phonetransfer.data.PersistedTransferOperation
+import com.shinpstudio.phonetransfer.data.SavedPc
 import com.shinpstudio.phonetransfer.data.SavedPcStore
+import com.shinpstudio.phonetransfer.data.TransferOperationStore
+import com.shinpstudio.phonetransfer.domain.LocalUploadCheckpoint
+import com.shinpstudio.phonetransfer.domain.ServerUploadStatus
+import com.shinpstudio.phonetransfer.domain.UploadRecoveryDecision
+import com.shinpstudio.phonetransfer.domain.UploadRecoveryRules
+import com.shinpstudio.phonetransfer.protocol.Transfer
+import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +41,7 @@ import kotlinx.coroutines.launch
 
 class FileTransferService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private lateinit var operationStore: TransferOperationStore
     private var transferJob: Job? = null
     private var operationId: String? = null
     private var operationKind: TransferKind? = null
@@ -35,6 +49,7 @@ class FileTransferService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        operationStore = TransferOperationStore.get(this)
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(
@@ -55,20 +70,25 @@ class FileTransferService : Service() {
             return START_NOT_STICKY
         }
         if (request.action == ACTION_CANCEL) {
-            transferJob?.cancel(CancellationException("USER_CANCELLED"))
-            if (transferJob?.isActive != true) stopSelf()
+            handleCancel(request, startId)
             return START_NOT_STICKY
         }
-        if (request.action !in setOf(ACTION_UPLOAD, ACTION_DOWNLOAD)) {
+        if (request.action !in setOf(ACTION_UPLOAD, ACTION_DOWNLOAD, ACTION_RESUME)) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
         if (transferJob?.isActive == true) return START_NOT_STICKY
 
-        val currentOperation =
-            request.getStringExtra(EXTRA_OPERATION_ID) ?: UUID.randomUUID().toString()
+        val currentOperation = request.requireString(EXTRA_OPERATION_ID)
         val kind =
-            if (request.action == ACTION_UPLOAD) {
+            if (request.action == ACTION_RESUME) {
+                val persisted = safeFind(currentOperation)
+                    ?: run {
+                        stopSelf(startId)
+                        return START_NOT_STICKY
+                    }
+                persisted.kind.toTransferKind()
+            } else if (request.action == ACTION_UPLOAD) {
                 TransferKind.Upload
             } else {
                 TransferKind.Download
@@ -81,14 +101,60 @@ class FileTransferService : Service() {
         transferJob =
             scope.launch {
                 try {
-                    runTransfer(request, currentOperation, kind)
+                    val persisted =
+                        if (request.action == ACTION_RESUME) {
+                            requireOperation(currentOperation)
+                        } else {
+                            persistNewOperation(request, currentOperation, kind)
+                        }
+                    if (persisted.cancelRequested) {
+                        if (finishCancellation(persisted)) {
+                            TransferStatusBus.cancel(currentOperation, kind)
+                        } else {
+                            publishResumable(persisted, "CANCEL_PENDING", canResume = false)
+                        }
+                    } else {
+                        runTransfer(persisted, request.action == ACTION_RESUME)
+                    }
                 } catch (error: CancellationException) {
-                    TransferStatusBus.cancel(currentOperation, kind)
+                    val current = safeFind(currentOperation)
+                    if (current?.cancelRequested == true) {
+                        if (finishCancellation(current)) {
+                            TransferStatusBus.cancel(currentOperation, kind)
+                        } else {
+                            publishResumable(current, "CANCEL_PENDING", canResume = false)
+                        }
+                    } else if (current != null) {
+                        publishResumable(current, "PROCESS_INTERRUPTED")
+                    }
                 } catch (error: FileTransferException) {
-                    TransferStatusBus.fail(currentOperation, kind, error.code)
+                    val current = safeFind(currentOperation)
+                    if (current != null && error.retryable && !current.cancelRequested) {
+                        publishResumable(current, error.code)
+                    } else if (current != null) {
+                        val converged = terminalize(current)
+                        if (!converged) {
+                            publishResumable(current, "CANCEL_PENDING_${error.code}", canResume = false)
+                        } else {
+                            TransferStatusBus.fail(currentOperation, kind, error.code)
+                        }
+                    } else {
+                        TransferStatusBus.fail(currentOperation, kind, error.code)
+                    }
+                } catch (error: IOException) {
+                    val current = safeFind(currentOperation)
+                    if (current != null && !current.cancelRequested) {
+                        publishResumable(current, "CONNECTION_FAILED")
+                    } else {
+                        TransferStatusBus.fail(currentOperation, kind, "CONNECTION_FAILED")
+                    }
                 } catch (_: SecurityException) {
+                    val current = safeFind(currentOperation)
+                    if (current != null) terminalize(current)
                     TransferStatusBus.fail(currentOperation, kind, "SAF_PERMISSION_DENIED")
                 } catch (_: Exception) {
+                    val current = safeFind(currentOperation)
+                    if (current != null) terminalize(current)
                     TransferStatusBus.fail(currentOperation, kind, "TRANSFER_FAILED")
                 } finally {
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -98,49 +164,408 @@ class FileTransferService : Service() {
         return START_NOT_STICKY
     }
 
-    private suspend fun runTransfer(intent: Intent, currentOperation: String, kind: TransferKind) {
-        val deviceId = intent.requireString(EXTRA_DEVICE_ID)
-        val shareId = intent.requireString(EXTRA_SHARE_ID)
+    private suspend fun runTransfer(operation: PersistedTransferOperation, resumed: Boolean) {
         val pc =
-            SavedPcStore.get(this).read().firstOrNull { it.deviceId == deviceId }
+            SavedPcStore.get(this).read().firstOrNull { it.deviceId == operation.deviceId }
                 ?: throw FileTransferException(
                     "PC_NOT_FOUND",
                     false,
                     "The paired PC is no longer saved."
                 )
-        val repository = FileTransferRepository(this)
+        val uri = operation.uri.toUri()
+        if (resumed) {
+            requirePersistedGrant(operation, uri)
+            verifyPcForResume(pc)
+        }
 
-        if (kind == TransferKind.Upload) {
-            val directory = intent.requireString(EXTRA_REMOTE_PATH)
-            val uri = intent.requireString(EXTRA_URI).toUri()
-            val persisted = takePersistable(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            try {
-                val result =
-                    repository.upload(pc, shareId, directory, uri) { done, total ->
-                        publishProgress(currentOperation, kind, done, total)
-                    }
-                TransferStatusBus.complete(currentOperation, kind, result.fileName)
-            } finally {
-                if (persisted) {
-                    releasePersistable(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-            }
+        if (operation.kind == DurableTransferKind.Upload) {
+            runUpload(operation, pc, uri)
         } else {
-            val remotePath = intent.requireString(EXTRA_REMOTE_PATH)
-            val uri = intent.requireString(EXTRA_URI).toUri()
-            val persisted = takePersistable(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            try {
-                val result =
-                    repository.download(pc, shareId, remotePath, uri) { done, total ->
-                        publishProgress(currentOperation, kind, done, total)
+            runDownload(operation, pc, uri)
+        }
+    }
+
+    private suspend fun runUpload(
+        initial: PersistedTransferOperation,
+        pc: SavedPc,
+        uri: Uri
+    ) {
+        val repository = DurableUploadRepository(this)
+        var current = initial
+        val source = repository.inspectSource(uri)
+        current = bindAndValidateSource(current, source)
+        publishProgress(current.operationId, TransferKind.Upload, current.committedOffset, source.size)
+
+        val server =
+            if (current.serverTransferId == null) {
+                val created = repository.createOrRecover(
+                    pc,
+                    current.shareId,
+                    current.remotePath,
+                    source,
+                    checkNotNull(current.idempotencyKey)
+                )
+                current = persist(
+                    current.withServer(
+                        created.transferId,
+                        created.transferredBytes,
+                        System.currentTimeMillis()
+                    )
+                )
+                created
+            } else {
+                repository.status(pc, current.serverTransferId)
+            }
+
+        when (val decision = reconcile(current, server)) {
+            UploadRecoveryDecision.Completed -> {
+                finishSuccess(current, source.name)
+                return
+            }
+
+            is UploadRecoveryDecision.Terminal -> {
+                throw FileTransferException(
+                    decision.code,
+                    false,
+                    "The persisted upload cannot be resumed safely."
+                )
+            }
+
+            is UploadRecoveryDecision.Resume -> {
+                if (decision.offset > current.committedOffset) {
+                    current = persist(
+                        current.withOffset(decision.offset, System.currentTimeMillis())
+                    )
+                }
+                val result = repository.resume(
+                    pc,
+                    checkNotNull(current.serverTransferId),
+                    uri,
+                    source,
+                    decision.offset,
+                    { done, total ->
+                        publishProgress(current.operationId, TransferKind.Upload, done, total)
+                    },
+                    { committed ->
+                        current = persist(
+                            current.withOffset(committed, System.currentTimeMillis())
+                        )
                     }
-                TransferStatusBus.complete(currentOperation, kind, result.fileName)
-            } finally {
-                if (persisted) {
-                    releasePersistable(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                )
+                if (result.status != "completed") {
+                    throw FileTransferException(
+                        "UNEXPECTED_TRANSFER_STATE",
+                        true,
+                        "The upload did not converge to completed."
+                    )
+                }
+                finishSuccess(current, result.fileName)
+            }
+        }
+    }
+
+    private suspend fun runDownload(
+        operation: PersistedTransferOperation,
+        pc: SavedPc,
+        uri: Uri
+    ) {
+        val repository = FileTransferRepository(this)
+        val result = repository.download(pc, operation.shareId, operation.remotePath, uri) { done, total ->
+            publishProgress(operation.operationId, TransferKind.Download, done, total)
+        }
+        finishSuccess(operation, result.fileName)
+    }
+
+    private fun bindAndValidateSource(
+        operation: PersistedTransferOperation,
+        source: DurableUploadSource
+    ): PersistedTransferOperation {
+        if (operation.sourceName == null) {
+            return persist(
+                operation.withSource(
+                    source.name,
+                    source.size,
+                    source.sha256,
+                    System.currentTimeMillis()
+                )
+            )
+        }
+        val local = operation.localCheckpoint()
+        if (!UploadRecoveryRules.sourceMatches(local, source.name, source.size, source.sha256)) {
+            throw FileTransferException(
+                "SOURCE_CHANGED",
+                false,
+                "The selected source changed after the operation was persisted."
+            )
+        }
+        return operation
+    }
+
+    private fun reconcile(
+        operation: PersistedTransferOperation,
+        server: Transfer
+    ): UploadRecoveryDecision =
+        UploadRecoveryRules.reconcile(
+            operation.localCheckpoint(),
+            ServerUploadStatus(
+                server.fileName,
+                server.totalSize,
+                server.sha256,
+                server.transferredBytes,
+                server.status
+            )
+        )
+
+    private fun PersistedTransferOperation.localCheckpoint(): LocalUploadCheckpoint =
+        LocalUploadCheckpoint(
+            checkNotNull(sourceName),
+            checkNotNull(totalSize),
+            checkNotNull(sha256),
+            committedOffset,
+            cancelRequested
+        )
+
+    private suspend fun verifyPcForResume(pc: SavedPc) {
+        try {
+            PairingRepository(this).connect(pc)
+        } catch (error: IOException) {
+            throw FileTransferException(
+                "PC_UNAVAILABLE",
+                true,
+                "The saved PC could not be reached for resume verification.",
+                error
+            )
+        } catch (error: Exception) {
+            throw FileTransferException(
+                "PC_IDENTITY_MISMATCH",
+                false,
+                "The saved PC identity could not be verified.",
+                error
+            )
+        }
+    }
+
+    private fun persistNewOperation(
+        intent: Intent,
+        currentOperation: String,
+        kind: TransferKind
+    ): PersistedTransferOperation {
+        val deviceId = intent.requireString(EXTRA_DEVICE_ID)
+        val shareId = intent.requireString(EXTRA_SHARE_ID)
+        val remotePath = intent.requireString(EXTRA_REMOTE_PATH)
+        val uri = intent.requireString(EXTRA_URI).toUri()
+        val now = System.currentTimeMillis()
+        val operation =
+            if (kind == TransferKind.Upload) {
+                PersistedTransferOperation.upload(
+                    currentOperation,
+                    deviceId,
+                    shareId,
+                    remotePath,
+                    uri.toString(),
+                    UUID.randomUUID().toString(),
+                    now
+                )
+            } else {
+                PersistedTransferOperation.download(
+                    currentOperation,
+                    deviceId,
+                    shareId,
+                    remotePath,
+                    uri.toString(),
+                    now
+                )
+            }
+        val grant = grantFlag(operation.kind)
+        val persistedGrant = takePersistable(uri, grant)
+        return try {
+            operationStore.insert(
+                operation.withGrant(persistedGrant, System.currentTimeMillis())
+            )
+        } catch (error: Exception) {
+            if (persistedGrant) releasePersistable(uri, grant)
+            throw FileTransferException(
+                "LOCAL_JOURNAL_UNAVAILABLE",
+                true,
+                "The transfer operation could not be persisted.",
+                error
+            )
+        }
+    }
+
+    private fun persist(operation: PersistedTransferOperation): PersistedTransferOperation =
+        try {
+            operationStore.replace(operation)
+        } catch (error: Exception) {
+            throw FileTransferException(
+                "LOCAL_JOURNAL_UNAVAILABLE",
+                true,
+                "The transfer checkpoint could not be persisted.",
+                error
+            )
+        }
+
+    private fun requireOperation(operationId: String): PersistedTransferOperation =
+        safeFind(operationId)
+            ?: throw FileTransferException(
+                "RECOVERY_OPERATION_NOT_FOUND",
+                false,
+                "The interrupted transfer no longer exists."
+            )
+
+    private fun safeFind(operationId: String): PersistedTransferOperation? =
+        try {
+            operationStore.find(operationId)
+        } catch (_: Exception) {
+            null
+        }
+
+    private fun requirePersistedGrant(operation: PersistedTransferOperation, uri: Uri) {
+        if (!operation.persistedGrant || !hasPersistedGrant(uri, grantFlag(operation.kind))) {
+            throw FileTransferException(
+                "SAF_PERMISSION_LOST",
+                false,
+                "The persisted SAF permission required to resume is unavailable."
+            )
+        }
+    }
+
+    private fun hasPersistedGrant(uri: Uri, flag: Int): Boolean =
+        contentResolver.persistedUriPermissions.any { permission ->
+            permission.uri == uri &&
+                if (flag == Intent.FLAG_GRANT_READ_URI_PERMISSION) {
+                    permission.isReadPermission
+                } else {
+                    permission.isWritePermission
+                }
+        }
+
+    private suspend fun terminalize(operation: PersistedTransferOperation): Boolean {
+        val marked = try {
+            operationStore.requestCancel(operation.operationId, System.currentTimeMillis()) ?: operation
+        } catch (_: Exception) {
+            return false
+        }
+        return finishCancellation(marked)
+    }
+
+    private suspend fun finishCancellation(operation: PersistedTransferOperation): Boolean {
+        if (operation.kind == DurableTransferKind.Upload) {
+            val pc = SavedPcStore.get(this).read().firstOrNull { it.deviceId == operation.deviceId }
+            if (pc != null) {
+                val repository = DurableUploadRepository(this)
+                var transferId = operation.serverTransferId
+                if (
+                    transferId == null &&
+                    operation.sourceName != null &&
+                    operation.totalSize != null &&
+                    operation.sha256 != null
+                ) {
+                    try {
+                        val created = repository.createOrRecover(
+                            pc,
+                            operation.shareId,
+                            operation.remotePath,
+                            DurableUploadSource(
+                                operation.sourceName,
+                                operation.totalSize,
+                                operation.sha256
+                            ),
+                            checkNotNull(operation.idempotencyKey)
+                        )
+                        transferId = created.transferId
+                    } catch (error: FileTransferException) {
+                        if (error.retryable) return false
+                    } catch (_: IOException) {
+                        return false
+                    }
+                }
+                if (transferId != null) {
+                    try {
+                        repository.cancel(pc, transferId)
+                    } catch (error: FileTransferException) {
+                        if (error.retryable) return false
+                    } catch (_: IOException) {
+                        return false
+                    }
                 }
             }
         }
+        return removeOperation(operation)
+    }
+
+    private fun finishSuccess(operation: PersistedTransferOperation, fileName: String) {
+        if (!removeOperation(operation)) {
+            throw FileTransferException(
+                "LOCAL_JOURNAL_UNAVAILABLE",
+                true,
+                "The completed transfer could not be cleared from local recovery state."
+            )
+        }
+        TransferStatusBus.complete(operation.operationId, operation.kind.toTransferKind(), fileName)
+    }
+
+    private fun removeOperation(operation: PersistedTransferOperation): Boolean {
+        return try {
+            operationStore.remove(operation.operationId)
+            if (operation.persistedGrant) {
+                releasePersistable(operation.uri.toUri(), grantFlag(operation.kind))
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun handleCancel(intent: Intent, startId: Int) {
+        val target = intent.getStringExtra(EXTRA_OPERATION_ID)
+            ?: operationId
+            ?: try {
+                operationStore.read().firstOrNull()?.operationId
+            } catch (_: Exception) {
+                null
+            }
+        if (target == null) {
+            stopSelf(startId)
+            return
+        }
+        val marked = try {
+            operationStore.requestCancel(target, System.currentTimeMillis())
+        } catch (_: Exception) {
+            null
+        }
+        if (marked == null) {
+            stopSelf(startId)
+            return
+        }
+        if (transferJob?.isActive == true && operationId == target) {
+            transferJob?.cancel(CancellationException("USER_CANCELLED"))
+            return
+        }
+        publishResumable(marked, "CANCEL_PENDING", canResume = false)
+        scope.launch {
+            if (finishCancellation(marked)) {
+                TransferStatusBus.cancel(target, marked.kind.toTransferKind())
+            } else {
+                publishResumable(marked, "CANCEL_PENDING", canResume = false)
+            }
+            stopSelf(startId)
+        }
+    }
+
+    private fun publishResumable(
+        operation: PersistedTransferOperation,
+        reason: String,
+        canResume: Boolean = true
+    ) {
+        TransferStatusBus.resumable(
+            operation.operationId,
+            operation.kind.toTransferKind(),
+            operation.committedOffset,
+            operation.totalSize ?: 0L,
+            reason,
+            canResume && operation.persistedGrant && !operation.cancelRequested
+        )
     }
 
     private fun publishProgress(operationId: String, kind: TransferKind, done: Long, total: Long) {
@@ -162,7 +587,10 @@ class FileTransferService : Service() {
         total: Long,
         text: String
     ): Notification {
-        val cancelIntent = Intent(this, FileTransferService::class.java).setAction(ACTION_CANCEL)
+        val currentOperation = operationId
+        val cancelIntent = Intent(this, FileTransferService::class.java)
+            .setAction(ACTION_CANCEL)
+        if (currentOperation != null) cancelIntent.putExtra(EXTRA_OPERATION_ID, currentOperation)
         val cancel =
             PendingIntent.getService(
                 this,
@@ -223,22 +651,27 @@ class FileTransferService : Service() {
         try {
             contentResolver.releasePersistableUriPermission(uri, flags)
         } catch (_: SecurityException) {
-            // Temporary URI grants remain sufficient while the foreground service is alive.
+            // A provider may already have revoked the grant. Local state is already terminal.
         }
     }
 
-    override fun onTimeout(startId: Int, fgsType: Int) {
-        val currentOperation = operationId
-        val kind = operationKind
-        if (currentOperation != null && kind != null) {
-            TransferStatusBus.fail(currentOperation, kind, "FOREGROUND_SERVICE_TIMEOUT")
+    private fun grantFlag(kind: DurableTransferKind): Int =
+        if (kind == DurableTransferKind.Upload) {
+            Intent.FLAG_GRANT_READ_URI_PERMISSION
+        } else {
+            Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         }
+
+    private fun DurableTransferKind.toTransferKind(): TransferKind =
+        if (this == DurableTransferKind.Upload) TransferKind.Upload else TransferKind.Download
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
         transferJob?.cancel(CancellationException("FOREGROUND_SERVICE_TIMEOUT"))
         stopSelf()
     }
 
     override fun onDestroy() {
-        transferJob?.cancel()
+        transferJob?.cancel(CancellationException("SERVICE_DESTROYED"))
         scope.cancel()
         super.onDestroy()
     }
@@ -259,6 +692,7 @@ class FileTransferService : Service() {
         private const val NOTIFICATION_INTERVAL_MS = 500L
         private const val ACTION_UPLOAD = "com.shinpstudio.phonetransfer.action.UPLOAD"
         private const val ACTION_DOWNLOAD = "com.shinpstudio.phonetransfer.action.DOWNLOAD"
+        private const val ACTION_RESUME = "com.shinpstudio.phonetransfer.action.RESUME_TRANSFER"
         private const val ACTION_CANCEL = "com.shinpstudio.phonetransfer.action.CANCEL_TRANSFER"
         private const val EXTRA_OPERATION_ID = "operationId"
         private const val EXTRA_DEVICE_ID = "deviceId"
@@ -302,10 +736,18 @@ class FileTransferService : Service() {
             context.startForegroundService(intent)
         }
 
-        fun cancel(context: Context) {
-            context.startService(
-                Intent(context, FileTransferService::class.java).setAction(ACTION_CANCEL)
+        fun resume(context: Context, operationId: String) {
+            context.startForegroundService(
+                Intent(context, FileTransferService::class.java)
+                    .setAction(ACTION_RESUME)
+                    .putExtra(EXTRA_OPERATION_ID, operationId)
             )
+        }
+
+        fun cancel(context: Context, operationId: String? = null) {
+            val intent = Intent(context, FileTransferService::class.java).setAction(ACTION_CANCEL)
+            if (operationId != null) intent.putExtra(EXTRA_OPERATION_ID, operationId)
+            context.startService(intent)
         }
     }
 }
