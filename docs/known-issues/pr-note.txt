@@ -1,0 +1,1 @@
+This branch intentionally stops before Android SAF and durable resume/recovery. See basic-transfer.md and the security review for the deferred acceptance boundary.
