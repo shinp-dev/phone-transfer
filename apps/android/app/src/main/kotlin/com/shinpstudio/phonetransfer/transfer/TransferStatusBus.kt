@@ -43,7 +43,14 @@ object TransferStatusBus {
     val state = mutableState.asStateFlow()
 
     fun begin(operationId: String, kind: TransferKind) {
-        if (mutableState.value is TransferServiceState.RecoveryBlocked) return
+        val current = mutableState.value
+        if (current is TransferServiceState.RecoveryBlocked) return
+        if (
+            current is TransferServiceState.Running && current.operationId != operationId ||
+            current is TransferServiceState.Resumable && current.operationId != operationId
+        ) {
+            return
+        }
         mutableState.value = TransferServiceState.Running(operationId, kind, 0, 0)
     }
 
@@ -57,6 +64,18 @@ object TransferStatusBus {
             mutableState.value =
                 TransferServiceState.Running(operationId, kind, transferred, total)
         }
+    }
+
+    fun restoreResumable(
+        operationId: String,
+        kind: TransferKind,
+        transferred: Long,
+        total: Long,
+        reason: String,
+        canResume: Boolean = true
+    ) {
+        if (mutableState.value is TransferServiceState.Running) return
+        resumable(operationId, kind, transferred, total, reason, canResume)
     }
 
     fun resumable(
