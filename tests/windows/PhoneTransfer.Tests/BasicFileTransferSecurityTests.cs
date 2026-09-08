@@ -35,6 +35,30 @@ public sealed class BasicFileTransferSecurityTests : IDisposable
     }
 
     [Fact]
+    public void TransfersAreOwnedByTheCreatingDevice()
+    {
+        var owner = Device();
+        var other = Device();
+        using var service = Service();
+        var shareId = Assert.Single(service.ListShares(owner)).Id;
+        var transfer = service.CreateTransfer(
+            owner,
+            shareId,
+            RelativeSharePath.Parse("owned.bin"),
+            1,
+            Convert.ToHexStringLower(SHA256.HashData([0x2a])),
+            Guid.NewGuid());
+
+        var get = Assert.Throws<BasicFileTransferException>(() => service.GetTransfer(other, transfer.TransferId));
+        var cancel = Assert.Throws<BasicFileTransferException>(() => service.Cancel(other, transfer.TransferId));
+        var append = Assert.Throws<BasicFileTransferException>(() => service.Append(other, transfer.TransferId, 0, new byte[] { 0x2a }));
+        Assert.Equal("TRANSFER_NOT_FOUND", get.Code);
+        Assert.Equal("TRANSFER_NOT_FOUND", cancel.Code);
+        Assert.Equal("TRANSFER_NOT_FOUND", append.Code);
+        Assert.Equal(TransferState.Created, service.GetTransfer(owner, transfer.TransferId).State);
+    }
+
+    [Fact]
     public void CancellingARevokedDeviceClosesAndDeletesItsPrivateStaging()
     {
         var device = Device();
