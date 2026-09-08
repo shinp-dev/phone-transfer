@@ -33,6 +33,8 @@ public static class ServerHost
             options.TimestampFormat = "O";
             options.UseUtcTimestamp = true;
         });
+        // Hosting diagnostics include the raw query string at Information level. File paths are private data.
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         builder.WebHost.ConfigureKestrel(options =>
         {
             options.Limits.MaxConcurrentConnections = MaximumConcurrentConnections;
