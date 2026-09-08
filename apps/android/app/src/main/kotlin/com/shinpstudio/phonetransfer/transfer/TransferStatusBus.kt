@@ -82,7 +82,7 @@ object TransferStatusBus {
                 transferred,
                 total,
                 reason,
-                canResume
+                canResume && kind == TransferKind.Upload
             )
     }
 
