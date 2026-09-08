@@ -18,6 +18,15 @@ sealed interface TransferServiceState {
         val totalBytes: Long
     ) : TransferServiceState
 
+    data class Resumable(
+        val operationId: String,
+        val kind: TransferKind,
+        val transferredBytes: Long,
+        val totalBytes: Long,
+        val reason: String,
+        val canResume: Boolean = true
+    ) : TransferServiceState
+
     data class Completed(val operationId: String, val kind: TransferKind, val fileName: String) :
         TransferServiceState
 
@@ -43,23 +52,58 @@ object TransferStatusBus {
         }
     }
 
+    fun resumable(
+        operationId: String,
+        kind: TransferKind,
+        transferred: Long,
+        total: Long,
+        reason: String,
+        canResume: Boolean = true
+    ) {
+        val current = mutableState.value
+        if (
+            current is TransferServiceState.Running && current.operationId != operationId ||
+            current is TransferServiceState.Resumable && current.operationId != operationId
+        ) {
+            return
+        }
+        mutableState.value =
+            TransferServiceState.Resumable(
+                operationId,
+                kind,
+                transferred,
+                total,
+                reason,
+                canResume
+            )
+    }
+
     fun complete(operationId: String, kind: TransferKind, fileName: String) {
         val current = mutableState.value
-        if (current is TransferServiceState.Running && current.operationId == operationId) {
+        if (
+            current is TransferServiceState.Running && current.operationId == operationId ||
+            current is TransferServiceState.Resumable && current.operationId == operationId
+        ) {
             mutableState.value = TransferServiceState.Completed(operationId, kind, fileName)
         }
     }
 
     fun fail(operationId: String, kind: TransferKind, code: String) {
         val current = mutableState.value
-        if (current is TransferServiceState.Running && current.operationId == operationId) {
+        if (
+            current is TransferServiceState.Running && current.operationId == operationId ||
+            current is TransferServiceState.Resumable && current.operationId == operationId
+        ) {
             mutableState.value = TransferServiceState.Failed(operationId, kind, code)
         }
     }
 
     fun cancel(operationId: String, kind: TransferKind) {
         val current = mutableState.value
-        if (current is TransferServiceState.Running && current.operationId == operationId) {
+        if (
+            current is TransferServiceState.Running && current.operationId == operationId ||
+            current is TransferServiceState.Resumable && current.operationId == operationId
+        ) {
             mutableState.value = TransferServiceState.Cancelled(operationId, kind)
         }
     }
