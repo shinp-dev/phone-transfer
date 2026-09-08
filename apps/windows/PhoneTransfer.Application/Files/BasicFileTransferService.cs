@@ -262,12 +262,23 @@ public sealed class BasicFileTransferService : IDisposable
                         "DESTINATION_CONFLICT", "The destination could not be completed without replacement.", true, exception);
                 }
 
+                // The rename is the commit point. Cleanup failure after this point must never rewrite a committed file as failed.
                 transfer.Staging = null;
-                transfer.Session!.Dispose();
-                transfer.Session = null;
                 transfer.State = TransferTransitions.Move(transfer.State, TransferState.Completed);
                 transfer.UpdatedAt = clock.GetUtcNow();
-                return Snapshot(transfer);
+                var completed = Snapshot(transfer);
+                var session = transfer.Session;
+                transfer.Session = null;
+                try
+                {
+                    session?.Dispose();
+                }
+                catch (IOException)
+                {
+                    // A private empty staging directory may remain. It is hidden and never adopted by future sessions.
+                    // Durable startup cleanup belongs to the recovery increment.
+                }
+                return completed;
             }
             catch (BasicFileTransferException)
             {
