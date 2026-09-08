@@ -14,6 +14,7 @@ import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.net.toUri
 import com.shinpstudio.phonetransfer.R
+import com.shinpstudio.phonetransfer.data.CancellationResult
 import com.shinpstudio.phonetransfer.data.DurableTransferKind
 import com.shinpstudio.phonetransfer.data.DurableUploadRepository
 import com.shinpstudio.phonetransfer.data.DurableUploadSource
@@ -24,6 +25,9 @@ import com.shinpstudio.phonetransfer.data.PersistedTransferOperation
 import com.shinpstudio.phonetransfer.data.SavedPc
 import com.shinpstudio.phonetransfer.data.SavedPcStore
 import com.shinpstudio.phonetransfer.data.TransferOperationStore
+import com.shinpstudio.phonetransfer.data.UploadCancellationRecovery
+import com.shinpstudio.phonetransfer.data.validateUploadResponse
+import com.shinpstudio.phonetransfer.data.verifyRecoveryPc
 import com.shinpstudio.phonetransfer.domain.LocalUploadCheckpoint
 import com.shinpstudio.phonetransfer.domain.ServerUploadStatus
 import com.shinpstudio.phonetransfer.domain.UploadRecoveryDecision
@@ -32,10 +36,10 @@ import com.shinpstudio.phonetransfer.protocol.Transfer
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -78,7 +82,7 @@ class FileTransferService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        if (transferJob?.isActive == true) return START_NOT_STICKY
+        if (transferJob?.isCompleted == false) return START_NOT_STICKY
 
         val currentOperation = request.requireString(EXTRA_OPERATION_ID)
         val kind =
@@ -95,19 +99,37 @@ class FileTransferService : Service() {
                 TransferKind.Download
             }
         operationId = currentOperation
-        TransferStatusBus.begin(currentOperation, kind)
+        if (!TransferStatusBus.begin(currentOperation, kind)) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         startForegroundCompat(notification(kind, 0, 0, "転送を準備しています"))
 
+        // Commit identity before another main-thread command can request cancellation.
+        val prepared = try {
+            if (request.action == ACTION_RESUME) {
+                requireOperation(currentOperation)
+            } else {
+                persistNewOperation(request, currentOperation, kind)
+            }
+        } catch (_: Exception) {
+            TransferStatusBus.recoveryBlocked("LOCAL_JOURNAL_UNAVAILABLE")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         transferJob =
-            scope.launch {
+            scope.launch(start = CoroutineStart.UNDISPATCHED) {
                 try {
-                    val persisted =
-                        if (request.action == ACTION_RESUME) {
-                            requireOperation(currentOperation)
-                        } else {
-                            persistNewOperation(request, currentOperation, kind)
-                        }
-                    if (persisted.cancelRequested) {
+                    withContext(Dispatchers.IO) {
+                    val persisted = if (request.action == ACTION_RESUME) {
+                        requireOperation(currentOperation)
+                    } else {
+                        acquireGrant(prepared)
+                    }
+                    if (persisted.completedFileName != null) {
+                        TransferStatusBus.complete(currentOperation, kind, persisted.completedFileName)
+                    } else if (persisted.cancelRequested) {
                         if (finishCancellation(persisted)) {
                             TransferStatusBus.cancel(currentOperation, kind)
                         } else {
@@ -116,13 +138,11 @@ class FileTransferService : Service() {
                     } else {
                         runTransfer(persisted, request.action == ACTION_RESUME)
                     }
+                    }
                 } catch (error: CancellationException) {
                     val current = safeFind(currentOperation)
                     if (current?.cancelRequested == true) {
-                        val converged =
-                            withContext(NonCancellable) {
-                                finishCancellation(current)
-                            }
+                        val converged = finishCancellation(current)
                         if (converged) {
                             TransferStatusBus.cancel(currentOperation, kind)
                         } else {
@@ -153,17 +173,15 @@ class FileTransferService : Service() {
                     val current = safeFind(currentOperation)
                     if (current != null && !current.cancelRequested) {
                         publishResumable(current, "CONNECTION_FAILED")
+                    } else if (current != null) {
+                        publishResumable(current, "CANCEL_PENDING", canResume = false)
                     } else {
                         TransferStatusBus.fail(currentOperation, kind, "CONNECTION_FAILED")
                     }
                 } catch (_: SecurityException) {
-                    val current = safeFind(currentOperation)
-                    if (current != null) terminalize(current)
-                    TransferStatusBus.fail(currentOperation, kind, "SAF_PERMISSION_DENIED")
+                    handleTerminalFailure(currentOperation, kind, "SAF_PERMISSION_DENIED")
                 } catch (_: Exception) {
-                    val current = safeFind(currentOperation)
-                    if (current != null) terminalize(current)
-                    TransferStatusBus.fail(currentOperation, kind, "TRANSFER_FAILED")
+                    handleTerminalFailure(currentOperation, kind, "TRANSFER_FAILED")
                 } finally {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
@@ -173,6 +191,13 @@ class FileTransferService : Service() {
     }
 
     private suspend fun runTransfer(operation: PersistedTransferOperation, resumed: Boolean) {
+        if (resumed && operation.kind == DurableTransferKind.Download) {
+            throw FileTransferException(
+                "DOWNLOAD_RESUME_UNSUPPORTED",
+                false,
+                "Choose a new destination for the interrupted download."
+            )
+        }
         val pc =
             SavedPcStore.get(this).read().firstOrNull { it.deviceId == operation.deviceId }
                 ?: throw FileTransferException(
@@ -367,16 +392,19 @@ class FileTransferService : Service() {
     private fun reconcile(
         operation: PersistedTransferOperation,
         server: Transfer
-    ): UploadRecoveryDecision = UploadRecoveryRules.reconcile(
-        operation.localCheckpoint(),
-        ServerUploadStatus(
-            server.fileName,
-            server.totalSize,
-            server.sha256,
-            server.transferredBytes,
-            server.status
+    ): UploadRecoveryDecision {
+        validateUploadResponse(operation, server)
+        return UploadRecoveryRules.reconcile(
+            operation.localCheckpoint(),
+            ServerUploadStatus(
+                server.fileName,
+                server.totalSize,
+                server.sha256,
+                server.transferredBytes,
+                server.status
+            )
         )
-    )
+    }
 
     private fun PersistedTransferOperation.localCheckpoint(): LocalUploadCheckpoint =
         LocalUploadCheckpoint(
@@ -388,23 +416,7 @@ class FileTransferService : Service() {
         )
 
     private suspend fun verifyPcForResume(pc: SavedPc) {
-        try {
-            PairingRepository(this).connect(pc)
-        } catch (error: IOException) {
-            throw FileTransferException(
-                "PC_UNAVAILABLE",
-                true,
-                "The saved PC could not be reached for resume verification.",
-                error
-            )
-        } catch (error: Exception) {
-            throw FileTransferException(
-                "PC_IDENTITY_MISMATCH",
-                false,
-                "The saved PC identity could not be verified.",
-                error
-            )
-        }
+        verifyRecoveryPc { PairingRepository(this).connect(pc) }
     }
 
     private fun persistNewOperation(
@@ -438,7 +450,7 @@ class FileTransferService : Service() {
                     now
                 )
             }
-        val inserted = try {
+        return try {
             operationStore.insert(operation)
         } catch (error: Exception) {
             throw FileTransferException(
@@ -448,10 +460,15 @@ class FileTransferService : Service() {
                 error
             )
         }
+    }
+
+    private fun acquireGrant(operation: PersistedTransferOperation): PersistedTransferOperation {
+        if (operation.cancelRequested) return operation
+        val uri = operation.uri.toUri()
         val grant = grantFlag(operation.kind)
-        if (!takePersistable(uri, grant)) return inserted
+        if (!takePersistable(uri, grant)) return requireOperation(operation.operationId)
         return try {
-            persist(inserted.withGrant(true, System.currentTimeMillis()))
+            persist(operation.withGrant(true, System.currentTimeMillis()))
         } catch (error: FileTransferException) {
             releasePersistable(uri, grant)
             throw error
@@ -480,6 +497,7 @@ class FileTransferService : Service() {
     private fun safeFind(operationId: String): PersistedTransferOperation? = try {
         operationStore.find(operationId)
     } catch (_: Exception) {
+        TransferStatusBus.recoveryBlocked("LOCAL_JOURNAL_INVALID")
         null
     }
 
@@ -503,119 +521,70 @@ class FileTransferService : Service() {
                 }
         }
 
-    private suspend fun terminalize(operation: PersistedTransferOperation): Boolean {
-        val marked = try {
-            operationStore.requestCancel(operation.operationId, System.currentTimeMillis())
-                ?: operation
-        } catch (_: Exception) {
-            return false
+    private suspend fun handleTerminalFailure(
+        currentOperation: String,
+        kind: TransferKind,
+        code: String
+    ) {
+        val current = safeFind(currentOperation)
+        if (current != null && !terminalize(current)) {
+            publishResumable(current, "CANCEL_PENDING_$code", canResume = false)
+        } else {
+            TransferStatusBus.fail(currentOperation, kind, code)
         }
-        return finishCancellation(marked)
     }
+
+    private suspend fun terminalize(operation: PersistedTransferOperation): Boolean =
+        finishCancellation(operation)
 
     private suspend fun finishCancellation(operation: PersistedTransferOperation): Boolean {
-        if (operation.kind == DurableTransferKind.Upload) {
-            val pc = SavedPcStore.get(this).read().firstOrNull { it.deviceId == operation.deviceId }
-            if (pc != null) {
-                val repository = DurableUploadRepository(this)
-                var transferId = operation.serverTransferId
-                if (
-                    transferId == null &&
-                    operation.sourceName != null &&
-                    operation.totalSize != null &&
-                    operation.sha256 != null
-                ) {
-                    try {
-                        val created = repository.createOrRecover(
-                            pc,
-                            operation.shareId,
-                            operation.remotePath,
-                            DurableUploadSource(
-                                operation.sourceName,
-                                operation.totalSize,
-                                operation.sha256
-                            ),
-                            checkNotNull(operation.idempotencyKey)
-                        )
-                        transferId = created.transferId
-                        if (created.status == "completed") {
-                            return completeDuringCancellation(operation, created.fileName)
-                        }
-                    } catch (error: FileTransferException) {
-                        if (error.retryable) return false
-                        return removeOperation(operation)
-                    } catch (_: IOException) {
-                        return false
-                    }
-                }
-                if (transferId != null) {
-                    try {
-                        val before = repository.status(pc, transferId)
-                        if (before.status == "completed") {
-                            return completeDuringCancellation(operation, before.fileName)
-                        }
-                        if (before.status == "cancelled" || before.status == "failed") {
-                            return removeOperation(operation)
-                        }
-                        repository.cancel(pc, transferId)
-                    } catch (error: FileTransferException) {
-                        val after = try {
-                            repository.status(pc, transferId)
-                        } catch (_: Exception) {
-                            null
-                        }
-                        if (after?.status == "completed") {
-                            return completeDuringCancellation(operation, after.fileName)
-                        }
-                        if (after?.status == "cancelled" || after?.status == "failed") {
-                            return removeOperation(operation)
-                        }
-                        if (error.retryable) return false
-                        return false
-                    } catch (_: IOException) {
-                        return false
-                    }
-                }
+        val recovery = UploadCancellationRecovery(
+            operationStore,
+            { deviceId -> SavedPcStore.get(this).read().firstOrNull { it.deviceId == deviceId } },
+            { pc -> verifyPcForResume(pc) },
+            DurableUploadRepository(this, callTimeoutMillis = 10_000)
+        )
+        return when (val result = recovery.cancel(operation.operationId)) {
+            CancellationResult.Pending -> false
+            CancellationResult.Cancelled -> {
+                cleanupGrant(operation)
+                true
+            }
+            is CancellationResult.Completed -> {
+                cleanupGrant(operation)
+                TransferStatusBus.complete(
+                    operation.operationId,
+                    operation.kind.toTransferKind(),
+                    result.fileName
+                )
+                true
             }
         }
-        return removeOperation(operation)
-    }
-
-    private fun completeDuringCancellation(
-        operation: PersistedTransferOperation,
-        fileName: String
-    ): Boolean = try {
-        finishSuccess(operation, fileName)
-        true
-    } catch (_: FileTransferException) {
-        false
     }
 
     private fun finishSuccess(operation: PersistedTransferOperation, fileName: String) {
-        if (!removeOperation(operation)) {
+        try {
+            operationStore.complete(operation.operationId, fileName, System.currentTimeMillis())
+        } catch (error: Exception) {
             throw FileTransferException(
                 "LOCAL_JOURNAL_UNAVAILABLE",
                 true,
-                "The completed transfer could not be cleared from local recovery state."
+                "The completion receipt could not be persisted.",
+                error
             )
         }
         TransferStatusBus.complete(operation.operationId, operation.kind.toTransferKind(), fileName)
+        cleanupGrant(operation)
     }
 
-    private fun removeOperation(operation: PersistedTransferOperation): Boolean {
-        try {
-            operationStore.remove(operation.operationId)
-        } catch (_: Exception) {
-            return false
-        }
+    private fun cleanupGrant(operation: PersistedTransferOperation) {
         try {
             val uri = operation.uri.toUri()
             val grant = grantFlag(operation.kind)
             if (hasPersistedGrant(uri, grant)) releasePersistable(uri, grant)
         } catch (_: Exception) {
-            // The journal is already terminal. SAF grant cleanup is best effort.
+            // Terminal authority is already durable. Grant cleanup is best effort.
         }
-        return true
     }
 
     private fun handleCancel(intent: Intent, startId: Int) {
@@ -633,24 +602,34 @@ class FileTransferService : Service() {
         val marked = try {
             operationStore.requestCancel(target, System.currentTimeMillis())
         } catch (_: Exception) {
+            TransferStatusBus.recoveryBlocked("LOCAL_JOURNAL_UNAVAILABLE")
+            transferJob?.cancel(CancellationException("LOCAL_JOURNAL_UNAVAILABLE"))
             null
         }
         if (marked == null) {
-            stopSelf(startId)
+            if (transferJob?.isCompleted != false) stopSelf(startId)
             return
         }
-        if (transferJob?.isActive == true && operationId == target) {
-            transferJob?.cancel(CancellationException("USER_CANCELLED"))
+        if (transferJob?.isCompleted == false) {
+            if (operationId == target && transferJob?.isActive == true) {
+                transferJob?.cancel(CancellationException("USER_CANCELLED"))
+            }
             return
         }
         publishResumable(marked, "CANCEL_PENDING", canResume = false)
-        scope.launch {
-            if (finishCancellation(marked)) {
-                TransferStatusBus.cancel(target, marked.kind.toTransferKind())
-            } else {
-                publishResumable(marked, "CANCEL_PENDING", canResume = false)
+        operationId = target
+        transferJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                withContext(Dispatchers.IO) {
+                if (finishCancellation(marked)) {
+                    TransferStatusBus.cancel(target, marked.kind.toTransferKind())
+                } else {
+                    publishResumable(marked, "CANCEL_PENDING", canResume = false)
+                }
+                }
+            } finally {
+                stopSelf(startId)
             }
-            stopSelf(startId)
         }
     }
 
@@ -659,18 +638,24 @@ class FileTransferService : Service() {
         reason: String,
         canResume: Boolean = true
     ) {
+        val latest = safeFind(operation.operationId) ?: return
+        latest.completedFileName?.let {
+            TransferStatusBus.complete(latest.operationId, latest.kind.toTransferKind(), it)
+            TransferStatusBus.restoreCompleted(latest.operationId, latest.kind.toTransferKind(), it)
+            return
+        }
         val grantAvailable = try {
-            hasPersistedGrant(operation.uri.toUri(), grantFlag(operation.kind))
+            hasPersistedGrant(latest.uri.toUri(), grantFlag(latest.kind))
         } catch (_: Exception) {
             false
         }
         TransferStatusBus.resumable(
             operation.operationId,
             operation.kind.toTransferKind(),
-            operation.committedOffset,
-            operation.totalSize ?: 0L,
+            latest.committedOffset,
+            latest.totalSize ?: 0L,
             reason,
-            canResume && grantAvailable && !operation.cancelRequested
+            canResume && grantAvailable && !latest.cancelRequested
         )
     }
 

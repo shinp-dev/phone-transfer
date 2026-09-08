@@ -21,9 +21,9 @@ ACTION_SEND/MULTIPLE, multi-transfer queue UX, text/history and unattended sched
 
 ## Local durable operation journal
 
-Use one versioned, bounded `AtomicFile` document in app-private storage, separate from paired-PC persistence.
+Use one versioned, bounded document with a checked file-sync / atomic-rename / directory-sync commit in app-private storage, separate from paired-PC persistence.
 
-The current UI/foreground-service model owns at most one operation, so the journal limit is deliberately **one** pending operation. Multiple records or an unknown/corrupt document fail closed rather than creating a queue semantics that the service does not implement.
+The current UI/foreground-service model owns at most one operation, so the journal limit is deliberately **one** operation: either pending or a completed receipt. The next explicit new transfer atomically replaces that receipt; there is no history or queue. Multiple records or an unknown/corrupt document fail closed rather than creating a queue semantics that the service does not implement.
 
 A record contains:
 
@@ -38,9 +38,10 @@ A record contains:
 - optional server transfer UUID after it is known;
 - last locally observed committed offset;
 - `cancelRequested` terminal intent;
+- optional `completedFileName` terminal receipt (schema 2; schema 1 pending records remain readable);
 - update timestamp.
 
-The journal is not a second authority for server progress. It is a recovery hint and local capability record. A local offset greater than the server committed offset is inconsistent and must fail closed. A server offset greater than the local checkpoint is expected after a crash between server acknowledgement and the local `AtomicFile` update and may be adopted.
+The journal is not a second authority for server progress. It is a recovery hint and local capability record. A local offset greater than the server committed offset is inconsistent and must fail closed. A server offset greater than the local checkpoint is expected after a crash between server acknowledgement and the local journal commit and may be adopted.
 
 `persistedGrant` in the JSON is not treated as proof by itself. Resume checks Android's current `persistedUriPermissions`. This also closes the crash gap where Android granted persistence but the process died before the journal flag could be updated.
 
@@ -70,7 +71,7 @@ Fresh upload:
 8. reopen the URI, stream/discard exactly to the server offset, then PATCH chunks;
 9. after each acknowledged PATCH, persist the observed offset;
 10. complete on the server;
-11. after `Completed` is observed, remove the local operation and release any persisted grant.
+11. after a matching full-size `Completed` is observed, durably persist its receipt, publish completion, and release any persisted grant. A kill before notification replays the receipt at startup.
 
 The local checkpoint is deliberately after the server acknowledgement. A crash before the local write can only make Android lag the server; it cannot make Android claim bytes the server did not commit.
 
@@ -86,7 +87,7 @@ For an upload:
 2. re-verify the saved PC through pinned TLS/client identity and `/api/v1/info` device ID;
 3. if source metadata is already persisted, query the existing server transfer or repeat create with the stable idempotency key before touching the URI;
 4. require server file name/size/hash to match the persisted operation and reject server offset below the local observed offset;
-5. if the server already reports a valid `completed` transfer, remove the local operation without reopening the Android source or sending bytes;
+5. if the server already reports a valid `completed` transfer, persist the completion receipt without reopening the Android source or sending bytes;
 6. if the server is `cancelled`/`failed` or otherwise incompatible, converge terminally and never resume bytes;
 7. if more bytes are needed, require the actual persisted SAF read grant to still exist;
 8. re-open and re-hash the whole source and require the same validated filename, total size and SHA-256;
@@ -105,7 +106,7 @@ Explicit user cancellation is a durable terminal intent:
 2. stop the running coroutine if present;
 3. query/cancel the known server transfer, or recreate/query by the persisted idempotency key when the create response had been lost;
 4. if completion won the server race, preserve `Completed` rather than falsely reporting `Cancelled`;
-5. only after cancellation/terminal convergence remove the local operation and release the SAF grant.
+5. only after verified cancelled/failed convergence remove the local operation; completion instead persists a receipt. Release the SAF grant after terminal authority is recorded.
 
 If the process dies after step 1, restart processing sees `cancelRequested` and performs cancellation cleanup only; it never resumes upload bytes. A stale chunk-checkpoint writer cannot clear that flag because operation merges are monotonic.
 
@@ -125,7 +126,7 @@ This is an availability limitation, not a false-success path: Phone Transfer doe
 
 The foreground service owns at most one active transfer and the durable journal holds at most one pending operation. This matches the current UI and notification/cancel model and avoids pretending that a multi-transfer queue exists.
 
-No long hash/network/content-provider operation is performed while holding the journal synchronization monitor. Atomic writes contain only the bounded JSON document.
+No long hash/network/content-provider operation is performed while holding the journal synchronization monitor. Checked atomic commits contain only the bounded JSON document. Provider capability checks are outside the journal monitor. Initial operation identity is committed before the service accepts a subsequent cancel command; the coroutine cancellation handler is entered before dispatch to IO.
 
 The operation merge rules are intentionally one-way for safety-critical fields so cancellation and acknowledged progress cannot be undone by stale coroutine state.
 
@@ -141,7 +142,7 @@ The operation merge rules are intentionally one-way for safety-critical fields s
 | local checkpoint persisted | GET must be at or ahead of local offset |
 | server reports offset behind local | fail closed; never resend based only on local state |
 | process dies while source is reopened/skipping | repeat full source validation and skip from byte zero to the server offset |
-| server completes, local record still present | prove matching server `completed`; remove local record without reopening source or duplicate PATCH |
+| server completes, local record still present | prove matching server `completed`; persist completion receipt without reopening source or duplicate PATCH |
 | source name/size/hash changed | fail terminal; do not PATCH |
 | persisted SAF grant lost before more bytes are needed | do not PATCH; converge cancellation when possible |
 | PC removed or `/info` identity mismatch | do not resume bytes |
@@ -181,3 +182,15 @@ CI must keep protocol generation, Windows tests, Android formatting/unit/lint/as
 Automated JVM tests cannot prove behavior of every SAF provider or Android process manager. Real-device acceptance remains required for provider grant persistence, process kill, device reboot, screen-off, foreground-service timeout, large files, nonseekable/reopenable sources, network loss and providers that reject persistent grants.
 
 The implementation should only be described as durable **upload** resume until those physical checks are complete. Interrupted download continuation remains intentionally out of scope.
+
+## Final-audit corrections
+
+- Journal reads recover legacy Android 9 `.bak` generations before testing absence. Reads do not interpret permission/I/O errors as an empty journal. Writes use checked file `fsync`, atomic rename and parent-directory `fsync`; an ambiguous commit poisons the store instance until restart. The Android implementation uses `Os.fsync` for directories. JVM tests exercise the same writer with a real temporary directory and injected sync/rename failures.
+- Cancellation uses the production `UploadCancellationRecovery` coordinator. It commits intent before lookup or HTTP, re-verifies the PC, reuses the stable create key, checkpoints a rediscovered server ID and validates every response before terminal convergence. Missing PC and all unproven errors retain intent; `retryable=false` is never evidence of absence.
+- Coroutine cancellation propagates unchanged through PC verification. Only explicit cancellation or a real terminal failure enters cancellation recovery. Its NonCancellable section has a 15-second overall budget and a 10-second per-call timeout. Body reading remains inside the cancellable HTTP callback, so deadline cancellation closes the active call as well as waiting for headers.
+- Response validation checks the expected known transfer ID, filename, size, hash, legal state, bounded/monotonic offset and full-size verifying/completed state. The current DTO does not expose owner/share/full path: Windows ownership checks and the idempotent create contract continue to provide those bindings.
+- All state-bus transitions are serialized. Startup publishes a journal snapshot only while it is still current, under the journal monitor; terminal states cannot be overwritten by stale resumable callbacks. Failed cleanup remains visible as cancel pending and blocks new transfers.
+- A completed receipt survives process recreation even if notification never ran. It is replayed without opening the source. Cancellation and stale checkpoint writers cannot erase it. Only a new explicit transfer retires it atomically.
+- Download resume is rejected by the service in addition to being disabled by the state bus and UI.
+
+Added JVM tests cover backup-only restart, corrupt/oversized journals, checked commit failures, completion receipts and stale startup snapshots; the actual cancellation coordinator is exercised with a real journal and scripted remote failures/completion races, including execution from an already-cancelled coroutine and a bounded hung request. These are not substitutes for Android service/SAF/OS physical acceptance. No instrumentation-based process-kill test is claimed.

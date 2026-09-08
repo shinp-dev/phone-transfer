@@ -38,28 +38,32 @@ sealed interface TransferServiceState {
     data class Cancelled(val operationId: String, val kind: TransferKind) : TransferServiceState
 }
 
-object TransferStatusBus {
+open class TransferStatusTracker {
     private val mutableState = MutableStateFlow<TransferServiceState>(TransferServiceState.Idle)
     val state = mutableState.asStateFlow()
 
-    fun begin(operationId: String, kind: TransferKind) {
+    @Synchronized
+    fun begin(operationId: String, kind: TransferKind): Boolean {
         val current = mutableState.value
-        if (current is TransferServiceState.RecoveryBlocked) return
+        if (current is TransferServiceState.RecoveryBlocked) return false
         if (
             current is TransferServiceState.Running &&
             current.operationId != operationId ||
             current is TransferServiceState.Resumable &&
             current.operationId != operationId
         ) {
-            return
+            return false
         }
         mutableState.value = TransferServiceState.Running(operationId, kind, 0, 0)
+        return true
     }
 
+    @Synchronized
     fun recoveryBlocked(code: String) {
         mutableState.value = TransferServiceState.RecoveryBlocked(code)
     }
 
+    @Synchronized
     fun progress(operationId: String, kind: TransferKind, transferred: Long, total: Long) {
         val current = mutableState.value
         if (current is TransferServiceState.Running && current.operationId == operationId) {
@@ -68,6 +72,7 @@ object TransferStatusBus {
         }
     }
 
+    @Synchronized
     fun restoreResumable(
         operationId: String,
         kind: TransferKind,
@@ -76,10 +81,12 @@ object TransferStatusBus {
         reason: String,
         canResume: Boolean = true
     ) {
-        if (mutableState.value is TransferServiceState.Running) return
+        val current = mutableState.value
+        if (current is TransferServiceState.Running || current.isTerminal(operationId)) return
         resumable(operationId, kind, transferred, total, reason, canResume)
     }
 
+    @Synchronized
     fun resumable(
         operationId: String,
         kind: TransferKind,
@@ -89,7 +96,7 @@ object TransferStatusBus {
         canResume: Boolean = true
     ) {
         val current = mutableState.value
-        if (current is TransferServiceState.RecoveryBlocked) return
+        if (current is TransferServiceState.RecoveryBlocked || current.isTerminal(operationId)) return
         if (
             current is TransferServiceState.Running &&
             current.operationId != operationId ||
@@ -109,6 +116,17 @@ object TransferStatusBus {
             )
     }
 
+    @Synchronized
+    fun restoreCompleted(operationId: String, kind: TransferKind, fileName: String) {
+        val current = mutableState.value
+        if (current is TransferServiceState.RecoveryBlocked) return
+        if (current is TransferServiceState.Running) return
+        if (current is TransferServiceState.Resumable && current.operationId != operationId) return
+        if (current.isTerminal(operationId) && current !is TransferServiceState.Completed) return
+        mutableState.value = TransferServiceState.Completed(operationId, kind, fileName)
+    }
+
+    @Synchronized
     fun complete(operationId: String, kind: TransferKind, fileName: String) {
         val current = mutableState.value
         if (
@@ -121,6 +139,7 @@ object TransferStatusBus {
         }
     }
 
+    @Synchronized
     fun fail(operationId: String, kind: TransferKind, code: String) {
         val current = mutableState.value
         if (
@@ -133,6 +152,7 @@ object TransferStatusBus {
         }
     }
 
+    @Synchronized
     fun cancel(operationId: String, kind: TransferKind) {
         val current = mutableState.value
         if (
@@ -144,4 +164,13 @@ object TransferStatusBus {
             mutableState.value = TransferServiceState.Cancelled(operationId, kind)
         }
     }
+
+    private fun TransferServiceState.isTerminal(operationId: String): Boolean = when (this) {
+        is TransferServiceState.Completed -> this.operationId == operationId
+        is TransferServiceState.Cancelled -> this.operationId == operationId
+        is TransferServiceState.Failed -> this.operationId == operationId
+        else -> false
+    }
 }
+
+object TransferStatusBus : TransferStatusTracker()

@@ -1,7 +1,8 @@
 package com.shinpstudio.phonetransfer.data
 
 import android.content.Context
-import android.util.AtomicFile
+import android.system.Os
+import android.system.OsConstants
 import com.shinpstudio.phonetransfer.domain.RemotePathRules
 import com.shinpstudio.phonetransfer.domain.TransferWireRules
 import java.io.File
@@ -37,6 +38,7 @@ internal data class PersistedTransferOperation(
     val sha256: String? = null,
     val committedOffset: Long = 0,
     val cancelRequested: Boolean = false,
+    val completedFileName: String? = null,
     val updatedAtEpochMillis: Long
 ) {
     fun withGrant(persisted: Boolean, now: Long): PersistedTransferOperation =
@@ -104,7 +106,7 @@ private data class TransferOperationDocument(
 internal object TransferOperationPersistence {
     const val MAX_BYTES = 256 * 1024
     const val MAX_OPERATIONS = 1
-    private const val VERSION = 1
+    private const val VERSION = 2
     private val json = Json { ignoreUnknownKeys = false }
 
     fun encode(operations: List<PersistedTransferOperation>): String {
@@ -121,7 +123,10 @@ internal object TransferOperationPersistence {
         val document = json.decodeFromString<TransferOperationDocument>(
             bytes.toString(Charsets.UTF_8)
         )
-        check(document.version == VERSION) { "TRANSFER_JOURNAL_VERSION" }
+        check(document.version == 1 || document.version == VERSION) { "TRANSFER_JOURNAL_VERSION" }
+        check(document.version != 1 || document.operations.all { it.completedFileName == null }) {
+            "TRANSFER_JOURNAL_VERSION"
+        }
         validate(document.operations)
         return document.operations
     }
@@ -140,6 +145,9 @@ internal object TransferOperationPersistence {
     ): PersistedTransferOperation {
         validateOperation(previous)
         validateOperation(next)
+        check(previous.completedFileName == null || previous == next) {
+            "TRANSFER_ALREADY_COMPLETED"
+        }
         check(previous.operationId == next.operationId) { "TRANSFER_OPERATION_ID_CHANGED" }
         check(previous.kind == next.kind) { "TRANSFER_OPERATION_KIND_CHANGED" }
         check(previous.deviceId == next.deviceId) { "TRANSFER_OPERATION_DEVICE_CHANGED" }
@@ -180,6 +188,21 @@ internal object TransferOperationPersistence {
         when (operation.kind) {
             DurableTransferKind.Upload -> validateUpload(operation)
             DurableTransferKind.Download -> validateDownload(operation)
+        }
+        operation.completedFileName?.let { name ->
+            RemotePathRules.validateName(name)
+            if (operation.kind == DurableTransferKind.Upload) {
+                check(operation.serverTransferId != null && name == operation.sourceName) {
+                    "INVALID_COMPLETION_RECEIPT"
+                }
+                check(operation.committedOffset == operation.totalSize) {
+                    "INVALID_COMPLETION_OFFSET"
+                }
+            } else {
+                check(name == RemotePathRules.fileName(operation.remotePath)) {
+                    "INVALID_COMPLETION_RECEIPT"
+                }
+            }
         }
     }
 
@@ -241,8 +264,7 @@ internal object TransferOperationPersistence {
     private const val MAX_URI_LENGTH = 16 * 1024
 }
 
-internal class TransferOperationStore private constructor(context: Context) {
-    private val file = AtomicFile(File(context.filesDir, "transfer-operations.json"))
+internal class TransferOperationStore internal constructor(private val file: DurableJournalFile) {
 
     @Synchronized
     fun read(): List<PersistedTransferOperation> = readUnlocked()
@@ -259,10 +281,12 @@ internal class TransferOperationStore private constructor(context: Context) {
             check(existing == operation) { "TRANSFER_OPERATION_ID_CONFLICT" }
             return existing
         }
-        check(current.size < TransferOperationPersistence.MAX_OPERATIONS) {
+        val pending = current.filter { it.completedFileName == null }
+        check(pending.size < TransferOperationPersistence.MAX_OPERATIONS) {
             "TRANSFER_OPERATION_LIMIT"
         }
-        writeUnlocked(current + operation)
+        // A new explicit user transfer retires the previous single completion receipt atomically.
+        writeUnlocked(pending + operation)
         return operation
     }
 
@@ -282,6 +306,7 @@ internal class TransferOperationStore private constructor(context: Context) {
         val current = readUnlocked()
         val index = current.indexOfFirst { it.operationId == operationId }
         if (index < 0) return null
+        if (current[index].completedFileName != null) return current[index]
         val updated = current[index].requestingCancel(now)
         val next = current.toMutableList().also { it[index] = updated }
         writeUnlocked(next)
@@ -292,35 +317,41 @@ internal class TransferOperationStore private constructor(context: Context) {
     fun remove(operationId: String) {
         val current = readUnlocked()
         if (current.none { it.operationId == operationId }) return
+        check(current.none { it.operationId == operationId && it.completedFileName != null }) {
+            "TRANSFER_ALREADY_COMPLETED"
+        }
         writeUnlocked(current.filterNot { it.operationId == operationId })
     }
 
-    private fun readUnlocked(): List<PersistedTransferOperation> {
-        if (!file.baseFile.exists()) return emptyList()
-        val bytes = file.openRead().use { input ->
-            val buffer = ByteArray(TransferOperationPersistence.MAX_BYTES + 1)
-            var size = 0
-            while (size < buffer.size) {
-                val count = input.read(buffer, size, buffer.size - size)
-                if (count <= 0) break
-                size += count
-            }
-            check(size <= TransferOperationPersistence.MAX_BYTES) { "TRANSFER_JOURNAL_TOO_LARGE" }
-            buffer.copyOf(size)
+    @Synchronized
+    fun complete(operationId: String, fileName: String, now: Long): PersistedTransferOperation {
+        val current = readUnlocked().single { it.operationId == operationId }
+        if (current.completedFileName != null) {
+            check(current.completedFileName == fileName) { "COMPLETION_IDENTITY_CHANGED" }
+            return current
         }
+        val completed = current.copy(
+            committedOffset = current.totalSize ?: 0L,
+            completedFileName = fileName,
+            updatedAtEpochMillis = now
+        )
+        writeUnlocked(listOf(completed))
+        return completed
+    }
+
+    @Synchronized
+    fun ifCurrent(snapshot: PersistedTransferOperation, publish: () -> Unit) {
+        if (readUnlocked().singleOrNull() == snapshot) publish()
+    }
+
+    private fun readUnlocked(): List<PersistedTransferOperation> {
+        val bytes = file.read() ?: return emptyList()
         return TransferOperationPersistence.decode(bytes)
     }
 
     private fun writeUnlocked(operations: List<PersistedTransferOperation>) {
         val bytes = TransferOperationPersistence.encode(operations).toByteArray(Charsets.UTF_8)
-        val output = file.startWrite()
-        try {
-            output.write(bytes)
-            file.finishWrite(output)
-        } catch (error: Exception) {
-            file.failWrite(output)
-            throw error
-        }
+        file.write(bytes)
     }
 
     companion object {
@@ -328,7 +359,23 @@ internal class TransferOperationStore private constructor(context: Context) {
         private var instance: TransferOperationStore? = null
 
         fun get(context: Context): TransferOperationStore = instance ?: synchronized(this) {
-            instance ?: TransferOperationStore(context.applicationContext).also { instance = it }
+            instance ?: TransferOperationStore(
+                DurableJournalFile(
+                    File(context.applicationContext.filesDir, "transfer-operations.json"),
+                    syncDirectory = { directory ->
+                        val descriptor = Os.open(
+                            directory.path,
+                            OsConstants.O_RDONLY or OsConstants.O_DIRECTORY,
+                            0
+                        )
+                        try {
+                            Os.fsync(descriptor)
+                        } finally {
+                            Os.close(descriptor)
+                        }
+                    }
+                )
+            ).also { instance = it }
         }
     }
 }

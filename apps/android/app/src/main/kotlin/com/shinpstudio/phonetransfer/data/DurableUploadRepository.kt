@@ -36,7 +36,10 @@ import okhttp3.Response
 
 data class DurableUploadSource(val name: String, val size: Long, val sha256: String)
 
-class DurableUploadRepository(context: Context) {
+internal class DurableUploadRepository(
+    context: Context,
+    private val callTimeoutMillis: Long = 0
+) : UploadCancellationRemote {
     private val appContext = context.applicationContext
     private val resolver = appContext.contentResolver
     private val json = Json { ignoreUnknownKeys = false }
@@ -83,7 +86,7 @@ class DurableUploadRepository(context: Context) {
         DurableUploadSource(name, size, digest.digest().toLowerHex())
     }
 
-    suspend fun createOrRecover(
+    override suspend fun createOrRecover(
         pc: SavedPc,
         shareId: String,
         directory: String,
@@ -107,7 +110,7 @@ class DurableUploadRepository(context: Context) {
                     .build()
                 try {
                     val transfer = executeJson<Transfer>(client, request, 201)
-                    validateTransfer(transfer, source)
+                    validateUploadTransfer(transfer, source)
                     return@withClient transfer
                 } catch (error: FileTransferException) {
                     throw error
@@ -119,7 +122,7 @@ class DurableUploadRepository(context: Context) {
         }
     }
 
-    suspend fun status(pc: SavedPc, transferId: String): Transfer = withContext(Dispatchers.IO) {
+    override suspend fun status(pc: SavedPc, transferId: String): Transfer = withContext(Dispatchers.IO) {
         requireCanonicalUuid(transferId, "INVALID_TRANSFER_ID")
         withClient(pc) { client -> getTransfer(client, pc, transferId) }
     }
@@ -172,7 +175,7 @@ class DurableUploadRepository(context: Context) {
                             buffer.copyOf(count),
                             expected
                         )
-                        validateTransfer(updated, source)
+                        validateUploadTransfer(updated, source, transferId)
                         offset = updated.transferredBytes
                         onCommitted(offset)
                         onProgress(offset, source.size)
@@ -188,7 +191,7 @@ class DurableUploadRepository(context: Context) {
             }
 
             val result = completeWithStatusRecovery(client, pc, transferId)
-            validateTransfer(result, source)
+            validateUploadTransfer(result, source, transferId)
             if (result.status != "completed") {
                 throw FileTransferException(
                     "UNEXPECTED_TRANSFER_STATE",
@@ -201,7 +204,7 @@ class DurableUploadRepository(context: Context) {
         }
     }
 
-    suspend fun cancel(pc: SavedPc, transferId: String) = withContext(Dispatchers.IO) {
+    override suspend fun cancel(pc: SavedPc, transferId: String) = withContext(Dispatchers.IO) {
         requireCanonicalUuid(transferId, "INVALID_TRANSFER_ID")
         withClient(pc) { client ->
             val request = Request.Builder()
@@ -315,32 +318,15 @@ class DurableUploadRepository(context: Context) {
         )
     }
 
-    private fun validateTransfer(transfer: Transfer, source: DurableUploadSource) {
-        requireCanonicalUuid(transfer.transferId, "INVALID_TRANSFER_ID")
-        if (
-            transfer.fileName != source.name ||
-            transfer.totalSize != source.size ||
-            transfer.sha256 != source.sha256 ||
-            transfer.transferredBytes !in 0..source.size
-        ) {
-            throw FileTransferException(
-                "SERVER_TRANSFER_MISMATCH",
-                false,
-                "The server transfer metadata does not match the persisted upload."
-            )
-        }
-    }
-
     private suspend inline fun <reified T> executeJson(
         client: OkHttpClient,
         request: Request,
         expectedCode: Int
     ): T {
-        val response = await(client.newCall(request))
-        response.use {
-            if (it.code != expectedCode) throw apiError(it)
-            val text = readBoundedText(it, MAX_JSON_RESPONSE_BYTES)
-            return json.decodeFromString(text)
+        return await(client.newCall(request)) { response ->
+            if (response.code != expectedCode) throw apiError(response)
+            val text = readBoundedText(response, MAX_JSON_RESPONSE_BYTES)
+            json.decodeFromString<T>(text)
         }
     }
 
@@ -387,7 +373,8 @@ class DurableUploadRepository(context: Context) {
         return source.readUtf8()
     }
 
-    private suspend fun await(call: Call): Response = suspendCancellableCoroutine { continuation ->
+    private suspend fun <T> await(call: Call, read: (Response) -> T): T =
+        suspendCancellableCoroutine { continuation ->
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, error: IOException) {
@@ -397,7 +384,16 @@ class DurableUploadRepository(context: Context) {
             }
 
             override fun onResponse(call: Call, response: Response) {
-                if (continuation.isActive) continuation.resume(response) else response.close()
+                try {
+                    response.use {
+                        if (continuation.isActive) {
+                            val result = read(it)
+                            if (continuation.isActive) continuation.resume(result)
+                        }
+                    }
+                } catch (error: Exception) {
+                    if (continuation.isActive) continuation.resumeWithException(error)
+                }
             }
         })
     }
@@ -406,7 +402,7 @@ class DurableUploadRepository(context: Context) {
         val identity = ClientIdentity.load(appContext)
         val client = PinnedTls.client(pc.lastKnownEndpoint, pc.pin, identity)
             .newBuilder()
-            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .callTimeout(callTimeoutMillis, TimeUnit.MILLISECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
@@ -449,5 +445,30 @@ class DurableUploadRepository(context: Context) {
         private val JSON_MEDIA = "application/json".toMediaType()
         private val OCTET_MEDIA = "application/octet-stream".toMediaType()
         private val HEX = "0123456789abcdef".toCharArray()
+    }
+}
+
+internal fun validateUploadTransfer(
+    transfer: Transfer,
+    source: DurableUploadSource,
+    expectedId: String? = null
+) {
+    val validId = try {
+        UUID.fromString(transfer.transferId).toString() == transfer.transferId
+    } catch (_: IllegalArgumentException) {
+        false
+    }
+    if (
+        !validId || (expectedId != null && expectedId != transfer.transferId) ||
+        transfer.fileName != source.name || transfer.totalSize != source.size ||
+        transfer.sha256 != source.sha256 || transfer.transferredBytes !in 0..source.size ||
+        transfer.status !in setOf("created", "transferring", "paused", "verifying", "completed", "cancelled", "failed") ||
+        (transfer.status in setOf("verifying", "completed") && transfer.transferredBytes != source.size)
+    ) {
+        throw FileTransferException(
+            "SERVER_TRANSFER_MISMATCH",
+            false,
+            "The server response does not match the durable upload."
+        )
     }
 }

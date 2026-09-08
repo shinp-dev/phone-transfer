@@ -294,16 +294,35 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
         } ?: return
         val kind = pending.kind.toTransferKind()
-        val persistedGrantAvailable = hasPersistedGrant(pending)
-        TransferStatusBus.restoreResumable(
-            pending.operationId,
-            kind,
-            pending.committedOffset,
-            pending.totalSize ?: 0L,
-            if (pending.cancelRequested) "CANCEL_PENDING" else "PROCESS_INTERRUPTED",
-            persistedGrantAvailable && !pending.cancelRequested
-        )
-        if (pending.cancelRequested) {
+        // Provider access happens outside the journal monitor. Publish only if this snapshot
+        // still exists, while serialized with completion/removal/new-operation persistence.
+        val grantAvailable = try {
+            pending.completedFileName == null && hasPersistedGrant(pending)
+        } catch (_: Exception) {
+            false
+        }
+        withContext(Dispatchers.IO) {
+            try {
+                transferOperations.ifCurrent(pending) {
+                    val completedName = pending.completedFileName
+                    if (completedName != null) {
+                        TransferStatusBus.restoreCompleted(pending.operationId, kind, completedName)
+                    } else {
+                        TransferStatusBus.restoreResumable(
+                            pending.operationId,
+                            kind,
+                            pending.committedOffset,
+                            pending.totalSize ?: 0L,
+                            if (pending.cancelRequested) "CANCEL_PENDING" else "PROCESS_INTERRUPTED",
+                            grantAvailable && !pending.cancelRequested
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                TransferStatusBus.recoveryBlocked("LOCAL_JOURNAL_INVALID")
+            }
+        }
+        if (pending.cancelRequested && pending.completedFileName == null) {
             FileTransferService.cancel(getApplication(), pending.operationId)
         }
     }

@@ -140,7 +140,7 @@ class TransferOperationPersistenceTest {
     @Test
     fun unknownSchemaAndMultiplePendingOperationsFailClosed() {
         val operation = upload()
-        val unknown = "{\"version\":2,\"operations\":[]}".toByteArray()
+        val unknown = "{\"version\":3,\"operations\":[]}".toByteArray()
         assertThrows(IllegalStateException::class.java) {
             TransferOperationPersistence.decode(unknown)
         }
