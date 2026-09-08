@@ -128,6 +128,7 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        fileTransfers.StopAdmission();
         Pairing.ClosePairing();
         var discovery = mdns;
         mdns = null;

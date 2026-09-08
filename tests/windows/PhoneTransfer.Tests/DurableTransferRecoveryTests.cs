@@ -18,13 +18,14 @@ public sealed class DurableTransferRecoveryTests : IDisposable
     private DurableFileTransferService? service;
     private SqliteTransferJournal? journal;
     private Action<TransferFaultPoint>? fault;
+    private Func<ITransferJournal, ITransferJournal>? wrapJournal;
     private string Database => Path.Combine(directory, "transfers.db");
 
     private DurableFileTransferService Start()
     {
         service?.Dispose();
         journal = new SqliteTransferJournal(Database);
-        service = new DurableFileTransferService(store, files, files, journal,
+        service = new DurableFileTransferService(store, files, files, wrapJournal?.Invoke(journal) ?? journal,
             id => id == device.DeviceId ? device : null, point => fault?.Invoke(point));
         service.Initialize();
         return service;
@@ -286,6 +287,91 @@ public sealed class DurableTransferRecoveryTests : IDisposable
         await Task.WhenAll(completion, revoke);
         Assert.Equal(TransferState.Cancelled, Assert.Single(journal!.Load()).State);
         Assert.Null(files.Destination);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void AmbiguousJournalCommitPoisonsProcessWithoutRollingBackAcknowledgedFileBytes(bool afterCommit, bool completion)
+    {
+        wrapJournal = inner => new FailingJournal(inner, afterCommit, completion ? TransferState.Completed : TransferState.Transferring);
+        Start();
+        var created = Create();
+        if (completion) service!.Append(device, created.TransferId, 0, payload);
+        Assert.Throws<BasicFileTransferException>(() => completion
+            ? service!.Complete(device, created.TransferId)
+            : service!.Append(device, created.TransferId, 0, payload));
+        Assert.Equal("TRANSFER_SERVICE_UNAVAILABLE", Assert.Throws<BasicFileTransferException>(() => service!.GetTransfer(device, created.TransferId)).Code);
+        wrapJournal = null;
+        Start();
+        var recovered = service!.GetTransfer(device, created.TransferId);
+        Assert.Equal(completion || afterCommit ? payload.Length : 0, recovered.TransferredBytes);
+        if (completion) Assert.Equal(TransferState.Completed, recovered.State);
+        else Assert.Equal(recovered.TransferredBytes, Assert.Single(files.Staging.Values).Bytes.Length);
+    }
+
+    [Fact]
+    public async Task SameTransferPatchesSerializeAndAnUnrelatedTransferProgressesDuringHash()
+    {
+        Start();
+        var first = Create();
+        var other = service!.CreateTransfer(device, store.Value!.Generation, RelativeSharePath.Parse("other.bin"), payload.Length,
+            first.Sha256, Guid.NewGuid());
+        using var reached = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        fault = point =>
+        {
+            if (point == TransferFaultPoint.ChunkFlushed) { reached.Set(); Assert.True(release.Wait(TimeSpan.FromSeconds(15))); }
+        };
+        var append = Task.Run(() => service.Append(device, first.TransferId, 0, payload));
+        Assert.True(reached.Wait(TimeSpan.FromSeconds(15)));
+        var duplicate = Task.Run(() => Assert.Throws<BasicFileTransferException>(() => service.Append(device, first.TransferId, 0, payload)));
+        release.Set();
+        await Task.WhenAll(append, duplicate);
+        Assert.Equal("OFFSET_MISMATCH", duplicate.Result.Code);
+        reached.Reset();
+        release.Reset();
+        fault = point =>
+        {
+            if (point == TransferFaultPoint.HashVerified) { reached.Set(); Assert.True(release.Wait(TimeSpan.FromSeconds(15))); }
+        };
+        var completion = Task.Run(() => service.Complete(device, first.TransferId));
+        Assert.True(reached.Wait(TimeSpan.FromSeconds(15)));
+        try
+        {
+            var otherAppend = Task.Run(() => service.Append(device, other.TransferId, 0, payload));
+            var progress = await otherAppend.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(payload.Length, progress.TransferredBytes);
+        }
+        finally { release.Set(); }
+        await completion;
+    }
+
+    [Fact]
+    public void ShutdownStopsNewMutationsAndPreservesDurableStagingForRestart()
+    {
+        Start();
+        var created = Create();
+        service!.Append(device, created.TransferId, 0, payload.AsMemory(0, 4));
+        service.StopAdmission();
+        Assert.Throws<BasicFileTransferException>(() => service.Append(device, created.TransferId, 4, payload.AsMemory(4)));
+        Start();
+        Assert.Equal(4, service!.GetTransfer(device, created.TransferId).TransferredBytes);
+    }
+
+    private sealed class FailingJournal(ITransferJournal inner, bool after, TransferState target) : ITransferJournal
+    {
+        public IReadOnlyList<DurableTransfer> Load() => inner.Load();
+        public void Insert(DurableTransfer record) => inner.Insert(record);
+        public void Replace(DurableTransfer previous, DurableTransfer next)
+        {
+            if (next.State != target) { inner.Replace(previous, next); return; }
+            if (after) inner.Replace(previous, next);
+            throw new TransferJournalException();
+        }
+        public void Dispose() => inner.Dispose();
     }
 
     public void Dispose()

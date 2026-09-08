@@ -32,7 +32,7 @@ public static class DurableTransferMachine
     public static void Validate(DurableTransfer record)
     {
         if (record.TransferId == Guid.Empty || record.OwnerDeviceId == Guid.Empty || record.ShareId == Guid.Empty ||
-            record.IdempotencyKey == Guid.Empty || !Hash(record.OwnerCertificate) || !Hash(record.Sha256) ||
+            record.IdempotencyKey == Guid.Empty || record.CreatedAt == default || record.UpdatedAt == default || record.OwnerRegisteredAt == default || !Hash(record.OwnerCertificate) || !Hash(record.Sha256) ||
             record.TotalSize is < 0 or > BasicFileTransferService.MaximumFileBytes ||
             record.CommittedOffset < 0 || record.CommittedOffset > record.TotalSize || record.Revision < 0 ||
             !Enum.IsDefined(record.State) || record.Staging is null ||

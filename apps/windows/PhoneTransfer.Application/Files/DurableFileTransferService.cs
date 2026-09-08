@@ -27,6 +27,7 @@ public sealed partial class DurableFileTransferService : IFileTransferService
     private readonly TimeProvider clock;
     private bool ready;
     private bool stopped;
+    private volatile bool stopping;
     private volatile bool poisoned;
 
     public DurableFileTransferService(IShareConfigurationStore configurations, IShareFileSystem browsingFileSystem,
@@ -104,7 +105,8 @@ public sealed partial class DurableFileTransferService : IFileTransferService
             var active = transfers.Values.Select(e => Volatile.Read(ref e.Record)).Where(r => !r.Terminal).ToArray();
             if (transfers.Count >= DurableTransferMachine.MaximumRecords) throw Error("TOO_MANY_TRANSFERS");
             if (active.Count(r => r.OwnerDeviceId == device.DeviceId) >= 4) throw Error("TOO_MANY_ACTIVE_TRANSFERS", true);
-            if (totalSize > DurableTransferMachine.MaximumStagingBytes - active.Sum(r => r.TotalSize)) throw Error("STAGING_QUOTA_EXCEEDED", true);
+            var reserved = transfers.Values.Select(e => Volatile.Read(ref e.Record)).Where(r => r.State != TransferState.Completed).Sum(r => r.TotalSize);
+            if (totalSize > DurableTransferMachine.MaximumStagingBytes - reserved) throw Error("STAGING_QUOTA_EXCEEDED", true);
             using var session = fileSystem.OpenDurable(configuration);
             using var staging = session.CreateDurable(destination);
             Hit(TransferFaultPoint.StagingCreated);
@@ -295,7 +297,13 @@ public sealed partial class DurableFileTransferService : IFileTransferService
         {
             CheckAvailable();
             Authorize(device, DevicePermissions.Upload);
-            return action(entry);
+            try { return action(entry); }
+            catch (IOException)
+            {
+                Fail(entry);
+                Cleanup(entry.Record);
+                throw Error("FILESYSTEM_UNAVAILABLE");
+            }
         }
     });
 
@@ -368,14 +376,19 @@ public sealed partial class DurableFileTransferService : IFileTransferService
     {
         lifetime.EnterReadLock();
         try { CheckAvailable(); return action(); }
+        catch (IOException) { throw Error("FILESYSTEM_UNAVAILABLE"); }
+        catch (System.Data.Common.DbException) { throw Error("AUTHORIZATION_UNAVAILABLE"); }
         finally { lifetime.ExitReadLock(); }
     }
     private void CheckAvailable()
     {
-        if (!ready || stopped || poisoned) throw Error("TRANSFER_SERVICE_UNAVAILABLE");
+        if (!ready || stopped || stopping || poisoned) throw Error("TRANSFER_SERVICE_UNAVAILABLE");
     }
+    public void StopAdmission() => stopping = true;
+
     public void Dispose()
     {
+        StopAdmission();
         lifetime.EnterWriteLock(); // Stops admission and drains readers; forced kill still uses journal recovery.
         try
         {
