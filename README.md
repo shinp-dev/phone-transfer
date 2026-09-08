@@ -1,8 +1,10 @@
 # Phone Transfer
 
-AndroidスマートフォンとWindows PCの間で、同一LAN内だけでファイル・テキストを直接転送するアプリです。
+AndroidスマートフォンとWindows PCの間で、同一LAN内だけでファイルを直接転送するアプリです。クラウドや外部中継サーバーを転送経路に含めません。
 
-**現在は接続・認証・共有フォルダ・Windows handle-safe filesystem・認証済み基本ファイルAPIに加え、AndroidのSAF upload/downloadとdataSync Foreground Serviceまで実装中です。まだ実機受入とdurable resume/recoveryが未完了なのでMVP完成とは扱いません。** WindowsトレイからQR表示・端末承認・登録解除・受信フォルダ設定、AndroidからQR読取・確認番号表示・mTLS接続、保存済みPCのmDNS再発見、PC共有フォルダの参照、SAFで選択したファイルの送受信ができます。[実装状況](docs/implementation-status.md)と[引き継ぎ資料](docs/handoff.md)を正本として確認してください。
+**現在のmainには、QR/mTLSペアリング、mDNS再発見、Windowsのhandle-safe共有フォルダ、認証済みファイルAPI、Android SAF upload/download、Foreground Service、Windows durable upload recovery、Android process-kill後のdurable upload recoveryまで実装済みです。** コアのファイル転送実装は大きく揃っていますが、実Windows/Android端末での受入試験が未完了のため、まだMVP完成とは扱いません。text/URL/history、ACTION_SEND/MULTIPLEなどのUX拡張も後続です。
+
+最新状況は [実装状況](docs/implementation-status.md) と [引き継ぎ資料](docs/handoff.md) を確認してください。
 
 ## 構成
 
@@ -11,6 +13,21 @@ AndroidスマートフォンとWindows PCの間で、同一LAN内だけでファ
 - `packages/protocol`: OpenAPI正本と生成C#・Kotlinモデル。
 - `packages/test-fixtures`: 共通通信データ検証。
 - `tests/windows`: 単体・実Kestrel TLS・Windows実filesystem adversarial tests。
+
+## 現在実装されている主な機能
+
+- Windowsで120秒有効のQRを表示し、比較番号を確認してAndroidを登録。
+- Android Keystoreのclient identityとWindows server SPKI pinを使ったmTLS通信。
+- Windows mDNS広告とAndroid NSDによる保存済みPCの再発見。
+- WindowsでローカルNTFS/ReFSの受信フォルダを設定。
+- retained directory handle基準のWindows filesystem adapterで、junction/symlink/reparse point/hardlinkや差し替え競合をfail closed。
+- Androidから共有フォルダを参照し、SAFで選んだファイルを送受信。
+- Windows uploadはprivate stagingへ書き込み、flush後にdurable journalのoffsetを進め、SHA-256検証後にsame-volume no-overwrite renameで完成。
+- Windows再起動後はSQLite journalとstaging identityをreconcileし、server側のtransfer stateを復旧。
+- Android uploadはlocal durable journal、stable idempotency key、SAF capability、source name/size/SHA-256、server transfer ID/offsetを保持し、process kill後にWindows stateをauthorityとして安全にreconcile。
+- Android resume前は保存済みPC identity、実際のpersisted URI permission、source full hashを再検証。
+- serverが既にCompletedならAndroid sourceを再openせずcompletion receiptへ収束。
+- interrupted downloadはgeneric SAF destinationの安全な継続を保証できないため、process kill後の同一destination resumeを意図的に行わない。
 
 ## 開発
 
@@ -26,16 +43,28 @@ dotnet format PhoneTransfer.slnx --verify-no-changes
 gradle -p apps/android spotlessCheck :protocol:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-Windows側は選択したLANアダプターのprivate IPv4で待ち受けます（登録用HTTPS: 58442、mTLS API: 58443）。必要な場合はWindowsファイアウォールでプライベートネットワークに限って許可してください。登録ボタンで120秒間有効なQRを表示し、スマホとの確認番号が一致した場合だけPC側で承認します。保存済みPCの接続先変更はmDNS候補をそのまま信用せず、既存SPKI pin・client証明書・`/api/v1/info`のDevice ID確認後にだけ保存します。
+Windows側は選択したLANアダプターのprivate IPv4で待ち受けます（登録用HTTPS: 58442、mTLS API: 58443）。必要な場合はWindowsファイアウォールでプライベートネットワークに限って許可してください。保存済みPCの接続先変更はmDNS候補をそのまま信用せず、既存SPKI pin・client証明書・`/api/v1/info`のDevice ID確認後にだけ保存します。
 
-Windowsでトレイを起動: `dotnet run --project apps/windows/PhoneTransfer.App`。
+Windowsでトレイを起動:
 
-受信フォルダはローカルNTFS/ReFSに限定されます。Windows filesystem adapterは保持済みdirectory handle基準で1 componentずつ辿り、junction/symlink/reparse point/hardlinkや差し替え競合をfail-closedに扱います。基本ファイルAPIはこのadapterだけを使い、physical root pathを公開しません。uploadはprivate stagingへ4 MiB以下のchunkを書き、SHA-256検証後にsame-volume no-overwrite renameで完成させます。現在のserver transfer registryはprocess-localで、PC crash後の再開・startup reconciliationはまだありません。
+```sh
+dotnet run --project apps/windows/PhoneTransfer.App
+```
 
-Androidは`ACTION_OPEN_DOCUMENT` / `CREATE_DOCUMENT`のcontent URIをfilesystem pathへ変換せず、そのまま`ContentResolver`で扱います。uploadはprotocolが事前SHA-256を要求するため、選択URIを1回読み切ってhash/sizeを確定し、同じURIを再openしてchunk送信します。seekは要求しません。downloadはWindowsが返すstrong SHA-256 ETagをstream中に再計算して照合し、成功した場合だけ完了表示します。長時間I/Oの所有者はActivity/ViewModelではなくdataSync Foreground Serviceです。
+## Durable recoveryの境界
+
+WindowsのSQLite transfer journalがupload progressのserver-side authorityです。基本順序は `write → flush → journal commit → response` で、renameがfile commit pointです。DB commitの成否が曖昧な場合やstaging/destination identityを証明できない場合はfail closedにします。
+
+Androidのlocal journalはserver progressのauthorityではありません。process-kill後はWindowsのtransfer statusを再取得し、server offsetがlocalより進んでいれば採用し、serverがlocalより後ろなら不整合として停止します。ユーザーcancel intentはremote cancellationより先にdurable化し、Completedとの競合ではserver Completedを優先します。
+
+詳細は [Windows durable recovery](docs/architecture/durable-transfer-recovery.md) と [Android durable recovery](docs/architecture/android-durable-transfer-recovery.md) を参照してください。
+
+## 残っているもの
+
+MVP判定前に最も重要なのは実機acceptanceです。Android↔Windowsの実端末で、QR/mDNS/SAF、process kill、端末/PC再起動、Wi-Fi断、screen-off、FGS timeout、multi-GB、disk-full、sleep/resume、ReFSや実mounted-volume等を確認する必要があります。
+
+実装として残る主な後続項目は、Windows journal retention/maintenance、DHCP/Wi-Fi adapter変更時の自動rebind、entry pagination、ACTION_SEND/MULTIPLE、text/URL/history、必要ならbounded recovery schedulerです。これらはdurable upload correctnessとは分離して進めます。
 
 ## 設計
 
 [Architecture](docs/architecture/overview.md) · [Protocol](docs/protocol/v1.md) · [Threat model](docs/security/threat-model.md) · [Basic file transfer review](docs/security/basic-file-transfer-review.md) · [Android SAF review](docs/security/android-saf-transfer-review.md) · [ADR](docs/decisions)
-
-外部サービスはビルド時の依存取得とGitHub CIにのみ使用します。製品の通信経路にはクラウド・中継サーバーを含めません。MVP完成には実Windows・Android端末でのQR/mDNS/SAF転送受入、durable resume/recovery、process kill・disk-full・sleep/recoveryを含む実機検証が必要です。text/historyとACTION_SEND/MULTIPLEは後続です。
