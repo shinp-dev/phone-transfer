@@ -57,7 +57,7 @@ internal sealed class ServerWindow : Form
         layout.Controls.Add(new Label
         {
             AutoSize = true,
-            Text = "ファイル・テキスト転送APIは開発中です。\n閉じるとトレイで待機します。 App 0.1.0 / Build 1 / Protocol 1"
+            Text = "ペアリング済み端末向けの基本ファイル転送APIは有効です。AndroidのSAF転送UIは開発中です。\n閉じるとトレイで待機します。 App 0.1.0 / Build 1 / Protocol 1"
         }, 0, 7);
         Controls.Add(layout);
         Shown += async (_, _) =>
@@ -108,7 +108,7 @@ internal sealed class ServerWindow : Form
     {
         using var dialog = new FolderBrowserDialog
         {
-            Description = "スマホから受信するフォルダを選択してください。ファイルAPIは安全なファイルI/O実装後に有効化します。",
+            Description = "スマホから受信するフォルダを選択してください。ペアリング済み端末の基本ファイルAPIで使用します。",
             ShowNewFolderButton = true,
             UseDescriptionForTitle = true
         };
@@ -127,7 +127,7 @@ internal sealed class ServerWindow : Form
         {
             shareConfiguration.SetRootPath(dialog.SelectedPath);
             RefreshShareConfiguration();
-            status.Text = "受信フォルダ設定を保存しました。ファイル転送APIはまだ無効です。";
+            status.Text = "受信フォルダ設定を保存しました。新しいファイルAPI要求に反映されます。";
         }
         catch (Exception exception) when (IsShareConfigurationException(exception))
         {
@@ -145,7 +145,7 @@ internal sealed class ServerWindow : Form
         {
             shareConfiguration.Clear();
             RefreshShareConfiguration();
-            status.Text = "受信フォルダ設定を解除しました。";
+            status.Text = "受信フォルダ設定を解除しました。進行中のアップロードは次の書き込み時に中止されます。";
         }
         catch (Exception exception) when (IsShareConfigurationException(exception))
         {
@@ -159,8 +159,8 @@ internal sealed class ServerWindow : Form
         {
             var root = shareConfiguration.GetRootPath();
             shareStatus.Text = root is null
-                ? "受信フォルダ: 未設定（ファイル転送APIはまだ無効です）"
-                : $"受信フォルダ: {root}\n（設定済みですが、ファイル転送APIはまだ無効です）";
+                ? "受信フォルダ: 未設定（ファイルAPIでは共有なしとして扱います）"
+                : $"受信フォルダ: {root}\n（ペアリング済み端末向けファイルAPIで使用中）";
             clearShare.Enabled = root is not null;
         }
         catch (Exception exception) when (IsShareConfigurationException(exception))

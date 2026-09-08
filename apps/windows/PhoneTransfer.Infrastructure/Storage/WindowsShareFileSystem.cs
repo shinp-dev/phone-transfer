@@ -65,7 +65,8 @@ public sealed class WindowsShareFileSystem : IShareFileSystem
                     {
                         Components(RelativeSharePath.Parse(name));
                         using var child = OpenVerified(chain.Last(Root), name, null);
-                        entries.Add(new ShareEntry(name, WindowsFileNative.Inspect(child).Directory));
+                        var info = WindowsFileNative.Inspect(child);
+                        entries.Add(new ShareEntry(name, info.Directory, info.Length, info.ModifiedAt));
                     }
                     catch (ArgumentException) { continue; }
                     catch (IOException) { continue; } // Unsafe, disappeared, or locked entry: never expose it.

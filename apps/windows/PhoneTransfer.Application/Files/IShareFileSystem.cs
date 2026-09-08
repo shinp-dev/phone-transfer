@@ -18,7 +18,28 @@ public interface IShareFileSession : IDisposable
 }
 
 // Listing is advisory, bounded and not a snapshot or an authorization capability.
-public sealed record ShareEntry(string Name, bool IsDirectory);
+// Equality intentionally remains name/kind based for the pre-metadata application contract.
+public sealed class ShareEntry : IEquatable<ShareEntry>
+{
+    public ShareEntry(string name, bool isDirectory, long size = 0, DateTimeOffset modifiedAt = default)
+    {
+        Name = name;
+        IsDirectory = isDirectory;
+        Size = size;
+        ModifiedAt = modifiedAt;
+    }
+
+    public string Name { get; }
+    public bool IsDirectory { get; }
+    public long Size { get; }
+    public DateTimeOffset ModifiedAt { get; }
+
+    public bool Equals(ShareEntry? other) => other is not null &&
+        string.Equals(Name, other.Name, StringComparison.Ordinal) && IsDirectory == other.IsDirectory;
+
+    public override bool Equals(object? obj) => Equals(obj as ShareEntry);
+    public override int GetHashCode() => HashCode.Combine(Name, IsDirectory);
+}
 
 public interface IShareReadFile : IDisposable
 {
