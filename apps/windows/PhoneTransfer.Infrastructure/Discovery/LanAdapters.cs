@@ -18,22 +18,32 @@ public static class LanAdapters
 
         foreach (var adapter in adapters)
         {
-            var properties = adapter.GetIPProperties();
-            var ipv4 = properties.GetIPv4Properties();
-            if (ipv4 is null) continue;
-            foreach (var address in properties.UnicastAddresses)
+            try
             {
-                if (IsPrivateV4(address.Address))
+                var properties = adapter.GetIPProperties();
+                var ipv4 = properties.GetIPv4Properties();
+                if (ipv4 is null) continue;
+                foreach (var address in properties.UnicastAddresses)
                 {
-                    result.Add(new LanAdapter(adapter.Name, address.Address, checked((uint)ipv4.Index)));
+                    if (IsPrivateV4(address.Address))
+                    {
+                        result.Add(new LanAdapter(adapter.Name, address.Address, checked((uint)ipv4.Index)));
+                    }
                 }
+            }
+            catch (NetworkInformationException)
+            {
+                // Some virtual/runner adapters report Up while IPv4 is not configured. Ignore them.
             }
         }
         return result;
     }
 
-    public static uint? FindInterfaceIndex(IPAddress address) => Find()
-        .FirstOrDefault(adapter => adapter.Address.Equals(address))?.InterfaceIndex;
+    public static uint? FindInterfaceIndex(IPAddress address)
+    {
+        if (!IsPrivateV4(address)) return null;
+        return Find().FirstOrDefault(adapter => adapter.Address.Equals(address))?.InterfaceIndex;
+    }
 
     public static bool IsPrivateV4(IPAddress address)
     {
