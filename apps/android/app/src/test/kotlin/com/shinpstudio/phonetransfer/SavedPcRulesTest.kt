@@ -56,4 +56,22 @@ class SavedPcRulesTest {
         }
         assertEquals("PC_LIMIT", error.message)
     }
+
+    @Test
+    fun endpointUpdatePreservesStoredIdentityAndDoesNotResurrectRemovedPc() {
+        val existing = pc()
+        val updated = SavedPcRules.updateEndpoint(
+            listOf(existing),
+            existing.deviceId,
+            "https://192.168.1.99:58443"
+        )
+        assertEquals(
+            existing.copy(lastKnownEndpoint = "https://192.168.1.99:58443"),
+            updated.single()
+        )
+        assertEquals(
+            emptyList<SavedPc>(),
+            SavedPcRules.updateEndpoint(emptyList(), existing.deviceId, existing.lastKnownEndpoint)
+        )
+    }
 }

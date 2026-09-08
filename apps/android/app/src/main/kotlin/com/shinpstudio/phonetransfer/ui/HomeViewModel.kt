@@ -3,6 +3,7 @@ package com.shinpstudio.phonetransfer.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.shinpstudio.phonetransfer.data.NsdDiscovery
 import com.shinpstudio.phonetransfer.data.PairingRepository
 import com.shinpstudio.phonetransfer.data.SavedPc
 import kotlinx.coroutines.CancellationException
@@ -11,6 +12,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -23,12 +25,38 @@ data class HomeState(
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = PairingRepository(application)
+    private val discovery = NsdDiscovery(application)
     private val mutableState = MutableStateFlow(HomeState())
     val state = mutableState.asStateFlow()
     private var operation: Job? = null
 
     init {
         runOperation { mutableState.value = state.value.copy(pcs = repository.saved()) }
+        viewModelScope.launch {
+            try {
+                discovery.discover().collect { candidate ->
+                    try {
+                        val refreshed = repository.acceptDiscovery(candidate) ?: return@collect
+                        mutableState.value = state.value.copy(
+                            pcs = repository.saved(),
+                            connectionLabel = if (state.value.connectionLabel == "PC未接続") {
+                                "${refreshed.displayName} をLAN上で再検出しました"
+                            } else {
+                                state.value.connectionLabel
+                            }
+                        )
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        // Discovery is not trusted. Ignore candidates that fail the stored pin/device identity check.
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                // QR/manual endpoints remain available when NSD is unavailable on the current network.
+            }
+        }
     }
 
     fun pair(payload: String) = runOperation {

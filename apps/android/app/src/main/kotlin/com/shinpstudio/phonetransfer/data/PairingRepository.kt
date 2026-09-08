@@ -56,6 +56,18 @@ class PairingRepository(context: Context) {
         }
     }
 
+    suspend fun acceptDiscovery(discovered: DiscoveredPc): SavedPc? = withContext(Dispatchers.IO) {
+        val current =
+            savedPcs.read().firstOrNull { it.deviceId == discovered.deviceId }
+                ?: return@withContext null
+        if (current.lastKnownEndpoint == discovered.endpoint) return@withContext current
+        val candidate = current.copy(lastKnownEndpoint = discovered.endpoint)
+        connect(candidate)
+        ensureActive()
+        savedPcs.updateEndpoint(current.deviceId, discovered.endpoint)
+            .firstOrNull { it.deviceId == current.deviceId }
+    }
+
     suspend fun pair(payload: String, onCode: suspend (String) -> Unit): SavedPc =
         withContext(Dispatchers.IO) {
             val invitation = PairingInvitation.parse(payload, Instant.now())
