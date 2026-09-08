@@ -1,7 +1,6 @@
 package com.shinpstudio.phonetransfer.ui
 
 import android.app.Application
-import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -252,8 +251,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 entries = if (active) emptyList() else current.entries,
                 currentPath = if (active) "" else current.currentPath,
                 connectionLabel =
-                    "スマホの登録情報を削除しました。" +
-                        "再登録前にPC側でも端末を解除してください。"
+                "スマホの登録情報を削除しました。" +
+                    "再登録前にPC側でも端末を解除してください。"
             )
         }
     }
@@ -279,7 +278,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 comparisonCode = null,
                 connectionLabel =
-                    "中止しました。PC側で承認済みの場合はPCの端末一覧から解除してください。"
+                "中止しました。PC側で承認済みの場合はPCの端末一覧から解除してください。"
             )
         }
     }
@@ -337,7 +336,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     entries = emptyList(),
                     currentPath = "",
                     connectionLabel =
-                        "${pc.displayName} に接続しました（PC側の受信フォルダは未設定です）"
+                    "${pc.displayName} に接続しました（PC側の受信フォルダは未設定です）"
                 )
             }
             return
@@ -375,7 +374,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     mutableState.update {
                         it.copy(
                             connectionLabel =
-                                "登録の有効期限が切れました。PCで新しいQRを表示してください。"
+                            "登録の有効期限が切れました。PCで新しいQRを表示してください。"
                         )
                     }
                 } catch (error: CancellationException) {
@@ -390,8 +389,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     mutableState.update {
                         it.copy(
                             connectionLabel =
-                                "接続または保存に失敗しました。LANとQR期限を確認してください。" +
-                                    "再登録する場合はPC側の登録を解除してください。"
+                            "接続または保存に失敗しました。LANとQR期限を確認してください。" +
+                                "再登録する場合はPC側の登録を解除してください。"
                         )
                     }
                 } finally {
