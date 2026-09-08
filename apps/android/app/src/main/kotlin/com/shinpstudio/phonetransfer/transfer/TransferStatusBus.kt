@@ -70,8 +70,10 @@ object TransferStatusBus {
         val current = mutableState.value
         if (current is TransferServiceState.RecoveryBlocked) return
         if (
-            current is TransferServiceState.Running && current.operationId != operationId ||
-            current is TransferServiceState.Resumable && current.operationId != operationId
+            current is TransferServiceState.Running &&
+            current.operationId != operationId ||
+            current is TransferServiceState.Resumable &&
+            current.operationId != operationId
         ) {
             return
         }
@@ -89,8 +91,10 @@ object TransferStatusBus {
     fun complete(operationId: String, kind: TransferKind, fileName: String) {
         val current = mutableState.value
         if (
-            current is TransferServiceState.Running && current.operationId == operationId ||
-            current is TransferServiceState.Resumable && current.operationId == operationId
+            current is TransferServiceState.Running &&
+            current.operationId == operationId ||
+            current is TransferServiceState.Resumable &&
+            current.operationId == operationId
         ) {
             mutableState.value = TransferServiceState.Completed(operationId, kind, fileName)
         }
@@ -99,8 +103,10 @@ object TransferStatusBus {
     fun fail(operationId: String, kind: TransferKind, code: String) {
         val current = mutableState.value
         if (
-            current is TransferServiceState.Running && current.operationId == operationId ||
-            current is TransferServiceState.Resumable && current.operationId == operationId
+            current is TransferServiceState.Running &&
+            current.operationId == operationId ||
+            current is TransferServiceState.Resumable &&
+            current.operationId == operationId
         ) {
             mutableState.value = TransferServiceState.Failed(operationId, kind, code)
         }
@@ -109,8 +115,10 @@ object TransferStatusBus {
     fun cancel(operationId: String, kind: TransferKind) {
         val current = mutableState.value
         if (
-            current is TransferServiceState.Running && current.operationId == operationId ||
-            current is TransferServiceState.Resumable && current.operationId == operationId
+            current is TransferServiceState.Running &&
+            current.operationId == operationId ||
+            current is TransferServiceState.Resumable &&
+            current.operationId == operationId
         ) {
             mutableState.value = TransferServiceState.Cancelled(operationId, kind)
         }
