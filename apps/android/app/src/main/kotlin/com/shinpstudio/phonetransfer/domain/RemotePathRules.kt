@@ -17,11 +17,15 @@ internal object RemotePathRules {
     }
 
     fun validateName(name: String): String {
-        require(name.isNotEmpty() && name.length <= MAX_SEGMENT_LENGTH) { "INVALID_REMOTE_NAME" }
+        require(name.isNotEmpty() && name.length <= MAX_SEGMENT_LENGTH) {
+            "INVALID_REMOTE_NAME"
+        }
         require(name != "." && name != "..") { "INVALID_REMOTE_NAME" }
         require(!name.endsWith('.') && !name.endsWith(' ')) { "INVALID_REMOTE_NAME" }
         require(Normalizer.isNormalized(name, Normalizer.Form.NFC)) { "INVALID_REMOTE_NAME" }
-        require(name.none { Character.isISOControl(it) || FORBIDDEN.contains(it) }) { "INVALID_REMOTE_NAME" }
+        require(name.none { Character.isISOControl(it) || FORBIDDEN.contains(it) }) {
+            "INVALID_REMOTE_NAME"
+        }
 
         val stem = name.substringBefore('.').uppercase(Locale.ROOT)
         require(stem !in setOf("CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$")) {

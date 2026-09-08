@@ -3,7 +3,10 @@ package com.shinpstudio.phonetransfer.transfer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-enum class TransferKind { Upload, Download }
+enum class TransferKind {
+    Upload,
+    Download
+}
 
 sealed interface TransferServiceState {
     data object Idle : TransferServiceState
@@ -44,7 +47,8 @@ object TransferStatusBus {
     fun progress(operationId: String, kind: TransferKind, transferred: Long, total: Long) {
         val current = mutableState.value
         if (current is TransferServiceState.Running && current.operationId == operationId) {
-            mutableState.value = TransferServiceState.Running(operationId, kind, transferred, total)
+            mutableState.value =
+                TransferServiceState.Running(operationId, kind, transferred, total)
         }
     }
 

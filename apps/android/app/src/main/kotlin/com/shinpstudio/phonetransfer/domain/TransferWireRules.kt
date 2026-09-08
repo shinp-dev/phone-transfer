@@ -13,7 +13,12 @@ internal object TransferWireRules {
     }
 
     fun strongSha256Etag(value: String?): String {
-        require(value != null && value.length == 66 && value.first() == '"' && value.last() == '"') {
+        require(
+            value != null &&
+                value.length == 66 &&
+                value.first() == '"' &&
+                value.last() == '"'
+        ) {
             "INVALID_ETAG"
         }
         val digest = value.substring(1, value.length - 1)

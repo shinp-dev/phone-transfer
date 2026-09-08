@@ -29,14 +29,18 @@ class RemotePathRulesTest {
             "LPT9",
             "cafe\u0301.txt"
         ).forEach { name ->
-            assertThrows(IllegalArgumentException::class.java) { RemotePathRules.validateName(name) }
+            assertThrows(IllegalArgumentException::class.java) {
+                RemotePathRules.validateName(name)
+            }
         }
     }
 
     @Test
     fun rejectsTraversalAndEmptySegmentsInRemotePaths() {
         listOf("../secret", "a/../secret", "/absolute", "a//b", "a/./b").forEach { path ->
-            assertThrows(IllegalArgumentException::class.java) { RemotePathRules.validate(path) }
+            assertThrows(IllegalArgumentException::class.java) {
+                RemotePathRules.validate(path)
+            }
         }
         assertEquals("", RemotePathRules.validate("", allowRoot = true))
     }
