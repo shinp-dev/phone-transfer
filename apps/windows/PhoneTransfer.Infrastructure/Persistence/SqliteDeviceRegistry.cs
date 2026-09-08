@@ -99,18 +99,25 @@ public sealed class SqliteDeviceRegistry : IPairedDeviceRegistry
         var now = clock.GetUtcNow();
         if (device.Revoked || now <= device.LastSeenAt || now - device.LastSeenAt < LastSeenWriteInterval) return false;
 
-        using var connection = Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            UPDATE devices SET last_seen_at=$now
-            WHERE device_id=$id AND certificate_sha256=$hash AND revoked=0 AND last_seen_at=$previous;
-            """;
-        command.Parameters.AddWithValue("$id", device.DeviceId.ToString("D"));
-        command.Parameters.AddWithValue("$hash", device.CertificateSha256);
-        command.Parameters.AddWithValue("$previous", device.LastSeenAt.ToString("O"));
-        command.Parameters.AddWithValue("$now", now.ToString("O"));
-        try { return command.ExecuteNonQuery() == 1; }
-        catch (SqliteException) { return false; }
+        try
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE devices SET last_seen_at=$now
+                WHERE device_id=$id AND certificate_sha256=$hash AND revoked=0 AND last_seen_at=$previous;
+                """;
+            command.Parameters.AddWithValue("$id", device.DeviceId.ToString("D"));
+            command.Parameters.AddWithValue("$hash", device.CertificateSha256);
+            command.Parameters.AddWithValue("$previous", device.LastSeenAt.ToString("O"));
+            command.Parameters.AddWithValue("$now", now.ToString("O"));
+            return command.ExecuteNonQuery() == 1;
+        }
+        catch (SqliteException)
+        {
+            // last-seen telemetry must not make an otherwise authorized API request unavailable.
+            return false;
+        }
     }
 
     public IReadOnlyList<PairedDevice> List()
