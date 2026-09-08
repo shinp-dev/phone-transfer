@@ -120,10 +120,10 @@ class FileTransferService : Service() {
                     val current = safeFind(currentOperation)
                     if (current?.cancelRequested == true) {
                         val converged =
-                  withContext(NonCancellable) {
-                      finishCancellation(current)
-                  }
-              if (converged) {
+                            withContext(NonCancellable) {
+                                finishCancellation(current)
+                            }
+                        if (converged) {
                             TransferStatusBus.cancel(currentOperation, kind)
                         } else {
                             publishResumable(current, "CANCEL_PENDING", canResume = false)
