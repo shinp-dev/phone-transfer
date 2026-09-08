@@ -164,6 +164,13 @@ class TransferOperationPersistenceTest {
         assertThrows(IllegalStateException::class.java) {
             TransferOperationPersistence.encode(listOf(impossible))
         }
+
+        val offsetWithoutServerIdentity = upload()
+            .withSource("resume.bin", 12, HASH, 2)
+            .copy(committedOffset = 4)
+        assertThrows(IllegalStateException::class.java) {
+            TransferOperationPersistence.encode(listOf(offsetWithoutServerIdentity))
+        }
     }
 
     @Test
