@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PhoneTransfer.Application.Files;
@@ -110,7 +111,6 @@ public static class FileTransferEndpoints
             if (!long.TryParse(context.Request.Headers["Upload-Offset"].ToString(), out var offset) || offset < 0)
                 throw new BasicFileTransferException("INVALID_UPLOAD_OFFSET", "Upload-Offset must be a non-negative integer.");
 
-            // Validate ownership and the currently committed offset before allocating a chunk buffer.
             var current = service.GetTransfer(Device(context), transferId);
             if (offset != current.TransferredBytes)
                 throw new BasicFileTransferException("OFFSET_MISMATCH", "The chunk does not match the committed upload offset.", true);
