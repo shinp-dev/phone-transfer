@@ -97,7 +97,8 @@ public sealed partial class DurableFileTransferService : IFileTransferService
             if (existing is not null)
             {
                 var record = Volatile.Read(ref existing.Record);
-                if (record.ShareId != shareId || record.Destination != destination.Value || record.TotalSize != totalSize || record.Sha256 != sha256)
+                if (record.OwnerCertificate != device.CertificateSha256 || record.OwnerRegisteredAt != device.RegisteredAt ||
+                    record.ShareId != shareId || record.Destination != destination.Value || record.TotalSize != totalSize || record.Sha256 != sha256)
                     throw Error("IDEMPOTENCY_CONFLICT");
                 return Snapshot(record);
             }
@@ -231,6 +232,8 @@ public sealed partial class DurableFileTransferService : IFileTransferService
             }
             Hit(TransferFaultPoint.CompletedCommitted);
         }
+        try { session.CleanupEmptyDirectory(record.Staging); }
+        catch (IOException) { /* Completed remains authoritative. */ }
     }
 
     public TransferSnapshot Cancel(PairedDevice device, Guid transferId) => Mutation(device, transferId, entry =>
@@ -349,7 +352,7 @@ public sealed partial class DurableFileTransferService : IFileTransferService
     private void EnsureConfiguration(DurableTransfer record, ShareConfiguration expected)
     {
         var current = configurations.Read();
-        if (current != expected || current.Generation != record.ShareId) throw Error("SHARE_NOT_FOUND");
+        if (current is null || current != expected || current.Generation != record.ShareId) throw Error("SHARE_NOT_FOUND");
     }
     private void Save(Entry entry, TransferState next, long? offset = null)
     {

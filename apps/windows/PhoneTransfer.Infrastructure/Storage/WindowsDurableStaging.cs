@@ -22,6 +22,7 @@ public sealed partial class WindowsShareFileSystem
             lock (gate)
             {
                 CheckOpen();
+                if (durableFiles.Count >= MaxOpenFiles) throw new IOException("TOO_MANY_OPEN_FILES");
                 var parts = Components(destination, requireFile: true);
                 var chain = Traverse(parts[..^1]);
                 SafeFileHandle? directory = null;
@@ -148,6 +149,20 @@ public sealed partial class WindowsShareFileSystem
                     }
                     catch (IOException) { /* Unsafe, busy or changed objects stay hidden and untouched. */ }
                 }
+            }
+        }
+
+        public void CleanupEmptyDirectory(StagingCapability capability)
+        {
+            lock (gate)
+            {
+                CheckOpen();
+                if (RootIdentity != capability.RootIdentity) return;
+                using var directory = OpenVerified(Root, DurablePrefix + capability.DirectoryToken.ToString("N"), true,
+                    delete: true, privateAcl: true);
+                WindowsFileNative.ValidatePrivateAcl(directory);
+                if (WindowsFileNative.Inspect(directory).Identity != capability.DirectoryIdentity) return;
+                if (WindowsFileNative.Enumerate(directory, 1).Count == 0) WindowsFileNative.DeleteOnClose(directory);
             }
         }
 

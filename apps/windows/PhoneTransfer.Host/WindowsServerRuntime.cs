@@ -40,13 +40,27 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         certificate = new WindowsServerCertificate().GetOrCreate(identity.DeviceId);
         Pairing = new PairingCoordinator(devices, TimeProvider.System);
         bootstrap = PairingHost.Create(Pairing, certificate, address, BootstrapPort);
-        var shareConfigurations = new WindowsShareConfigurationStore(directory);
-        var fileSystem = new WindowsShareFileSystem();
-        var journal = new SqliteTransferJournal(Path.Combine(directory, "transfers.db"));
-        fileTransfers = new DurableFileTransferService(shareConfigurations, fileSystem, fileSystem, journal,
-            id => devices.List().FirstOrDefault(device => device.DeviceId == id));
-        api = ServerHost.Create(identity, certificate, devices.Authorize, address, ApiPort,
-            device => devices.TryTouchLastSeen(device), fileTransfers);
+        SqliteTransferJournal? journal = null;
+        DurableFileTransferService? transfers = null;
+        try
+        {
+            var shareConfigurations = new WindowsShareConfigurationStore(directory);
+            var fileSystem = new WindowsShareFileSystem();
+            journal = new SqliteTransferJournal(Path.Combine(directory, "transfers.db"));
+            transfers = new DurableFileTransferService(shareConfigurations, fileSystem, fileSystem, journal,
+                id => devices.List().FirstOrDefault(device => device.DeviceId == id));
+            fileTransfers = transfers;
+            api = ServerHost.Create(identity, certificate, devices.Authorize, address, ApiPort,
+                device => devices.TryTouchLastSeen(device), fileTransfers);
+        }
+        catch
+        {
+            if (transfers is not null) transfers.Dispose();
+            else journal?.Dispose();
+            bootstrap.DisposeAsync().GetAwaiter().GetResult();
+            certificate.Dispose();
+            throw;
+        }
     }
 
     public static async Task<WindowsServerRuntime> StartAsync(string directory, IPAddress address, CancellationToken token)

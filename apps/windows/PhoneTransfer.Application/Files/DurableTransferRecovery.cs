@@ -49,6 +49,8 @@ public sealed partial class DurableFileTransferService
                 // an operational integrity failure: keep terminal DB authority and refuse API readiness.
                 if (!session.VerifyDestination(record.Staging, RelativeSharePath.Parse(record.Destination), record.TotalSize, record.Sha256))
                     throw new TransferJournalException();
+                try { session.CleanupEmptyDirectory(record.Staging); }
+                catch (IOException) { /* Completed remains authoritative. */ }
                 return;
             }
             if (record.State == TransferState.Verifying)
@@ -58,7 +60,13 @@ public sealed partial class DurableFileTransferService
                 var committed = false;
                 try { committed = session.VerifyDestination(record.Staging, RelativeSharePath.Parse(record.Destination), record.TotalSize, record.Sha256); }
                 catch (IOException) { /* No proven destination; require valid original staging below. */ }
-                if (committed) { Save(entry, TransferState.Completed); return; }
+                if (committed)
+                {
+                    Save(entry, TransferState.Completed);
+                    try { session.CleanupEmptyDirectory(record.Staging); }
+                    catch (IOException) { /* Completed remains authoritative. */ }
+                    return;
+                }
             }
             if (!IsAuthorized(record))
             {

@@ -2,7 +2,7 @@
 
 Updated: 2026-09-08
 
-This note defines the recovery boundary for the next Phase 3 increment. It is intentionally stricter than the current process-local upload registry. The existing mTLS, per-request revocation, handle-safe filesystem containment, private staging and no-replace completion remain mandatory lower-layer invariants.
+This note defines the Windows recovery boundary implemented in PR #11. Android process-kill recovery remains a separate increment. The existing mTLS, per-request revocation, handle-safe filesystem containment, private staging and no-replace completion remain mandatory lower-layer invariants.
 
 ## Scope and split
 
@@ -30,7 +30,7 @@ The first implementation PR should be Windows-only plus protocol changes only if
 - Network inputs never provide physical paths, native handles, staging names or staging tokens.
 - Persistent staging objects are reopened only through the existing retained-root/relative-handle containment model and must pass the same reparse/hardlink/volume checks as normal file access.
 - Device revocation is authoritative before cleanup. Cleanup failure cannot restore access.
-- Share reconfiguration invalidates resumption. Old staging may be cleaned up best-effort through a locally persisted root snapshot, but it is never served from an unshared root.
+- Share reconfiguration invalidates resumption. Old staging is quarantined. Recovery never reopens a former root from a stored path.
 - Terminal/idempotency records are retained long enough for retries and ambiguous responses to resolve consistently; eviction may remove only terminal records.
 
 ## Windows persistence model
@@ -46,7 +46,7 @@ A durable record needs at least:
 - total size and expected lowercase SHA-256;
 - durable state;
 - committed byte count;
-- configured-share root snapshot or local-only configuration identity used to reject resume after share change;
+- persisted share configuration generation plus retained-root file identity used to reject resume after share change;
 - random local-only staging token/name, never accepted from the network;
 - staging volume/file identity captured before completion when available;
 - created/updated timestamps and optional terminal reason.
@@ -133,7 +133,7 @@ Persist terminal cancellation before attempting staging deletion. Cleanup is ret
 
 On startup, cancelled/failed records may retain private staging only long enough for cleanup retries. They are never reopened for network writes.
 
-If the configured share changed since transfer creation, the transfer cannot resume. Mark it cancelled/failed and attempt cleanup against the locally persisted old root through the same handle-safe opener. If that old root is now unsafe, leave the private remnant untouched rather than bypass containment.
+If the configured share changed since transfer creation, the transfer cannot resume. Persist Cancelled and leave the old private remnant quarantined. No old root path is stored in the transfer journal or reopened for cleanup.
 
 ## Concurrency
 
@@ -191,3 +191,52 @@ If a provider did not grant persistable URI access, process-kill resume is unava
 - quota/count reconstruction from persisted nonterminal records.
 
 Do not claim durable resume until these crash/recovery tests exist and the recovery implementation has had an independent security/state-machine audit.
+
+## PR #11 implementation contract
+
+### Persistence and authority
+
+`SqliteTransferJournal` owns a dedicated `transfers.db`, separate from `devices.db`, and an exclusive process lease. Schema `user_version=1` contains a `transfers` table with transfer/device/idempotency identifiers, revision and a bounded, strictly deserialized transfer record. The record contains offset/state, expected metadata, certificate/registration binding, share generation and staging identities. The unique `(owner_device_id, idempotency_key)` mapping survives restart. Missing metadata, inconsistent indexes, unknown schema, failed quick-check or unrecognized JSON fields prevent readiness. Version zero is initialized only when there is no existing application schema.
+
+Every connection uses FULL synchronous writes, a 5-second busy timeout, bounded WAL checkpoint/retention settings, no pooling and a page-count limit. Each insert/compare-and-replace has an explicit short transaction. No filesystem I/O, callback, hash or network operation runs inside it. The exclusive lease prevents a second process from opening the same journal for reconciliation.
+
+`DurableTransferMachine` is the transition authority. `DurableFileTransferService` orchestrates write → FlushToDisk → SQLite commit → response. Journal commit exceptions are ambiguous, including disk-full during SQLite commit: poison the running service and deny subsequent file operations. **Never truncate following an ambiguous DB commit**, because the new DB offset may already be durable. A new service reloads the journal and reconciles instead.
+
+Filesystem write/flush failure before a DB transaction attempts handle-bound truncate plus FlushToDisk to the previous offset. Only successful durable rollback returns retryable `WRITE_FAILED` with Paused. Missing prefix/identity or failed rollback persists Failed. Terminal persistence precedes cleanup. Failed/cancelled cleanup is best effort and never changes the terminal state.
+
+### Staging and configuration
+
+`IDurableShareSession` is separate from ordinary process-local `CreateStaging`. Durable staging uses one random private directory and random `.part` component per upload. Capability metadata holds both tokens plus volume/file IDs for root, directory, file and destination parent. No physical path is persisted in the transfer record. `WindowsDurableStaging` reopens single components relative to retained handles; `WindowsFileNative.Inspect` supplies the full 128-bit file ID plus volume serial. Reparse points, multiple links, pending delete, root/parent changes and file replacement are rejected. Existing current-user protected owner-only DACLs are inspected on reopen, not assumed from a creation request. Dispose closes handles without deleting durable bytes; Delete is explicit.
+
+Share configuration version 2 persists an opaque generation UUID, also used as the wire share ID. Version 1 is atomically upgraded on local read. Saving/clearing/recreating a share invalidates old uploads, even when the chosen path is the same. The journal stores generation and root identity, never an old root path for later traversal.
+
+### Reconciliation
+
+Before either API listener starts, load and validate all records, then:
+
+1. Cancelled/Failed: cleanup only under the same current generation and matching capability; never resume.
+2. Changed/cleared share: active records become Cancelled; former roots are not opened.
+3. Completed: prove destination root/parent/file identity, length and SHA-256. A missing/changed destination leaves the terminal receipt unchanged and prevents file API readiness; it is an operational integrity error, not a reason to recreate staging. A changed share never causes traversal of its former root.
+4. Verifying: first attempt exact destination proof, including file ID and full SHA-256. A proven prior rename becomes Completed, even if the owner was subsequently revoked; authorization remains separately revoked. Otherwise require the original staging capability. An unrelated destination can never establish success.
+5. Other active records: require current device certificate **and registration timestamp**, generation, root/parent/directory/file identity and protected ACL. Missing/short staging fails closed; longer staging is durably truncated to the journal offset. Created/Transferring become Paused. Verifying rehashes the full stable file and retries no-replace completion.
+6. Repeatable bounded orphan scan and readiness publication. A crash at any step repeats the same rules on the next startup.
+
+Rename is the irreversible file commit point. After it, only Completed persistence and best-effort empty-directory cleanup occur. The device fence orders rename against authorization revoke. It does not encompass hashing. Power-loss acceptance must still confirm the storage stack's flush behavior; if a Completed receipt cannot be proven after restart, the implementation refuses readiness rather than returning an invented success.
+
+### Cleanup, retention and resource bounds
+
+Orphan scanning examines at most 4,097 direct root entries and refuses readiness when the 4,096-entry budget is exceeded. It never scans the whole filesystem. Only an unreferenced canonical durable-directory token with an actual current-user-only protected ACL, no reparse point and at most one canonical single-link `.part` file is eligible for handle deletion. Unknown contents, old process-local staging layouts, unsafe ACL/link objects and inaccessible objects remain hidden/quarantined. App provenance here is the protected current-user owner/ACL plus private random layout; same-user malware remains outside the threat boundary. Referenced identity mismatches are not reclassified as deletable orphans. Completed empty directories are cleaned only with matching directory identity.
+
+Records/idempotency mappings are capped at 4,096 with no automatic eviction in this increment. Four active transfers per device and a 256 GiB staging reservation cap apply. Reservations for Failed/Cancelled records are conservatively retained, including after best-effort deletion, so cleanup failure cannot bypass quota. Completed transfers release their staging reservation. Capacity exhaustion refuses new transfers; automated retention/maintenance is a future operational feature. Do not delete an active journal to evade these bounds.
+
+### Concurrency and shutdown
+
+A shared lifecycle read lease coordinates shutdown only; each transfer owns its mutation gate. A creation-only gate serializes admission/idempotency, never existing transfer I/O. A short per-device fence orders the authorization DB revoke against an offset commit or rename/Completed commit. Authorization revocation commits before waiting for any transfer gate/cleanup, so an in-flight hash cannot delay HTTP authorization denial. Request entry and commit boundaries recheck current authorization. A new registration of the same device/certificate cannot resume a previous registration's upload.
+
+Cancel and completion serialize on the transfer gate: a cancel that acquires it first persists Cancelled before deletion; a rename that wins remains Completed. Same-transfer stale PATCH requests serialize and the loser receives an offset conflict. Shutdown stops admission before Kestrel drain, waits for in-flight mutations, closes handles and releases the journal lease. Forced process loss does not depend on graceful cleanup.
+
+### Verification seams
+
+`TransferFaultPoint` covers staging create, transfer insert, chunk write, chunk flush, offset commit, Verifying commit, hash success, rename, Completed commit, Cancelled commit, device revoke commit and each reconciliation step. Tests construct new SQLite journals and services after interruptions, including a second restart. Additional journal wrappers inject exceptions before/after commits; filesystem seams inject partial writes, flush/truncate/delete failures. Windows tests exercise actual handle-relative reopen/truncate, full file identities, private ACL changes, junction/symlink/hardlink replacement, stale capabilities, outside containment, no-overwrite and native rename-before-DB recovery. Existing PR #7 adversarial tests remain enabled.
+
+OpenAPI/generated DTOs and Android source are unchanged. Android can continue its existing in-process ambiguous-response recovery against the durable Windows status. Android transfer DB, process-kill persistence, WorkManager and automatic restart are not implemented.

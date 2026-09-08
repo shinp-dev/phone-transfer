@@ -19,6 +19,7 @@ public interface IDurableShareSession : IDisposable
     bool VerifyDestination(StagingCapability capability, RelativeSharePath destination, long size, string sha256);
     // Only current-root private objects, bounded enumeration, never follows unknown/unsafe objects.
     void CleanupOrphans(IReadOnlySet<Guid> referencedDirectories);
+    void CleanupEmptyDirectory(StagingCapability capability);
 }
 
 public interface IDurableStagingFile : IShareReadFile

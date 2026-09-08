@@ -330,7 +330,8 @@ public sealed class DurableTransferRecoveryTests : IDisposable
         var duplicate = Task.Run(() => Assert.Throws<BasicFileTransferException>(() => service.Append(device, first.TransferId, 0, payload)));
         release.Set();
         await Task.WhenAll(append, duplicate);
-        Assert.Equal("OFFSET_MISMATCH", duplicate.Result.Code);
+        var duplicateError = await duplicate;
+        Assert.Equal("OFFSET_MISMATCH", duplicateError.Code);
         reached.Reset();
         release.Reset();
         fault = point =>
@@ -421,6 +422,7 @@ public sealed class DurableTransferRecoveryTests : IDisposable
             public bool VerifyDestination(StagingCapability capability, RelativeSharePath destination, long size, string sha256) =>
                 owner.Destination is { } file && file.Capability.FileIdentity == capability.FileIdentity &&
                 file.Bytes.LongLength == size && Convert.ToHexStringLower(SHA256.HashData(file.Bytes)) == sha256;
+            public void CleanupEmptyDirectory(StagingCapability capability) { }
             public void CleanupOrphans(IReadOnlySet<Guid> referencedDirectories)
             {
                 foreach (var key in owner.Staging.Keys.Where(k => !referencedDirectories.Contains(k)).ToArray()) owner.Staging.Remove(key);

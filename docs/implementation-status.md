@@ -2,7 +2,13 @@
 
 Updated: 2026-09-08
 
-See [development handoff](handoff.md) for continuation order. The repository is still pre-MVP: pairing, mDNS, shared-folder configuration, Windows handle-safe filesystem, the first authenticated Windows file-transfer API, and Android SAF/Foreground Service transfer ownership are implemented. Durable restart resume/recovery and full physical-device acceptance are not yet implemented.
+See [development handoff](handoff.md) for continuation order. The repository is still pre-MVP: pairing, mDNS, shared-folder configuration, Windows handle-safe filesystem, the first authenticated Windows file-transfer API, and Android SAF/Foreground Service transfer ownership are implemented. PR #11 adds Windows durable restart recovery; its CI and acceptance status are tracked below. Full physical-device acceptance and Android process-kill recovery remain pending.
+
+## PR #11 — Windows durable upload/recovery
+
+Implemented on existing `feature/durable-transfer-recovery`, not merged to main: separate versioned SQLite transfer journal, persistent idempotency/committed offsets, per-transfer mutation serialization, identity/ACL-validated durable staging reopen and truncate, startup readiness reconciliation, exact rename-before-DB recovery, terminal-first cancel/revoke cleanup, share-generation invalidation and bounded orphan handling. Windows shutdown retains durable staging. Android process-kill persistence remains unimplemented. See [durable recovery contract](architecture/durable-transfer-recovery.md) for invariants and operational capacity limits.
+
+The Phase 3 descriptions below record the previous basic increment. In the PR #11 production runtime, the upload authority is now SQLite; share IDs are persisted opaque configuration generations rather than process-local IDs. The old BasicFileTransferService remains for its existing regression tests and read-only browse/download helper use; the production host wires DurableFileTransferService for upload.
 
 ## Phase 1 — complete
 
@@ -46,7 +52,7 @@ PR #9 added the first authenticated network use of that adapter:
 - the service attempts temporary-to-persistable SAF grants for the operation and releases any grant it successfully persisted when the transfer ends;
 - only one Android foreground transfer is owned at a time in this basic increment.
 
-The current server upload registry and Android transfer-status bus are intentionally process-local. An orderly Windows shutdown disposes active sessions and deletes their uncompleted staging through the handle-safe adapter. A hard PC/Android process or OS crash can leave server staging remnants because durable startup reconciliation/cleanup is **not implemented yet**. Transfer status, committed offsets, DB/file reconciliation, crash recovery and restart resume are therefore not claimed by this increment.
+Before PR #11, the server upload registry and Android transfer-status bus were intentionally process-local. That earlier Windows shutdown disposed active sessions and deleted their uncompleted staging through the handle-safe adapter. That earlier increment did not implement startup reconciliation. PR #11 now provides Windows journal/status/offset recovery; Android process-kill recovery remains absent. See the PR #11 section above for current behavior and limits.
 
 Entry-list pagination cursors are also not implemented yet; the first page is capped at 200 and non-empty cursors are rejected rather than silently ignored.
 
@@ -63,7 +69,7 @@ Entry-list pagination cursors are also not implemented yet; the first page is ca
 - Android SAF paths stay as capabilities/URIs and never become OS path strings; upload and download both perform end-to-end SHA-256 validation against the Windows API contract;
 - Android long-running file I/O is owned by a non-exported dataSync Foreground Service.
 
-Operational/release hardening still outside this increment: protect `main` with required PR/CI checks, apply explicit per-user ACL policy consistently to existing application-state stores, optionally pin third-party GitHub Actions to immutable SHAs, complete real ReFS/volume-mount acceptance, and add startup cleanup/reconciliation for crash-left staging as part of durable transfer recovery.
+Operational/release hardening still outside this increment: protect `main` with required PR/CI checks, apply explicit per-user ACL policy consistently to existing application-state stores, optionally pin third-party GitHub Actions to immutable SHAs, complete real ReFS/volume-mount acceptance, and complete the PR #11 recovery gates and operational retention design.
 
 ## Remaining Phase 2–6
 
@@ -79,8 +85,8 @@ Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, DHCP/Wi-Fi redis
 
 ## Continuation order
 
-1. Finish CI/audit for `feature/android-saf-transfer`; verify manifest/Foreground Service restrictions, URI capability handling, mTLS ownership, hash verification and cancellation without weakening the Windows boundary.
+1. Finish all CI and self-audit for existing PR #11, then mark it Ready for review without merging.
 2. Run basic real-device Android↔Windows upload/download acceptance, including nonseekable/reopenable providers and failure during hashing/upload/export.
-3. Implement durable resume/recovery as a separate state-machine increment: persistent transfer DB, committed-offset recovery/truncate, startup staging reconciliation/cleanup, crash between rename/DB commit, disk-full and cancellation/revocation races.
+3. Follow Windows recovery with a separate Android process-kill persistence increment and a separately designed bounded journal retention/maintenance policy.
 4. Add ACTION_SEND/MULTIPLE and text/history separately.
 5. Run physical Windows/Android acceptance throughout; CI is not product acceptance.
