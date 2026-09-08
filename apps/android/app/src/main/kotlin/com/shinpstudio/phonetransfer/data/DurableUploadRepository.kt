@@ -36,10 +36,8 @@ import okhttp3.Response
 
 data class DurableUploadSource(val name: String, val size: Long, val sha256: String)
 
-internal class DurableUploadRepository(
-    context: Context,
-    private val callTimeoutMillis: Long = 0
-) : UploadCancellationRemote {
+internal class DurableUploadRepository(context: Context, private val callTimeoutMillis: Long = 0) :
+    UploadCancellationRemote {
     private val appContext = context.applicationContext
     private val resolver = appContext.contentResolver
     private val json = Json { ignoreUnknownKeys = false }
@@ -122,10 +120,11 @@ internal class DurableUploadRepository(
         }
     }
 
-    override suspend fun status(pc: SavedPc, transferId: String): Transfer = withContext(Dispatchers.IO) {
-        requireCanonicalUuid(transferId, "INVALID_TRANSFER_ID")
-        withClient(pc) { client -> getTransfer(client, pc, transferId) }
-    }
+    override suspend fun status(pc: SavedPc, transferId: String): Transfer =
+        withContext(Dispatchers.IO) {
+            requireCanonicalUuid(transferId, "INVALID_TRANSFER_ID")
+            withClient(pc) { client -> getTransfer(client, pc, transferId) }
+        }
 
     suspend fun resume(
         pc: SavedPc,
@@ -322,12 +321,10 @@ internal class DurableUploadRepository(
         client: OkHttpClient,
         request: Request,
         expectedCode: Int
-    ): T {
-        return await(client.newCall(request)) { response ->
-            if (response.code != expectedCode) throw apiError(response)
-            val text = readBoundedText(response, MAX_JSON_RESPONSE_BYTES)
-            json.decodeFromString<T>(text)
-        }
+    ): T = await(client.newCall(request)) { response ->
+        if (response.code != expectedCode) throw apiError(response)
+        val text = readBoundedText(response, MAX_JSON_RESPONSE_BYTES)
+        json.decodeFromString<T>(text)
     }
 
     private fun apiError(response: Response): FileTransferException {
@@ -375,28 +372,28 @@ internal class DurableUploadRepository(
 
     private suspend fun <T> await(call: Call, read: (Response) -> T): T =
         suspendCancellableCoroutine { continuation ->
-        continuation.invokeOnCancellation { call.cancel() }
-        call.enqueue(object : Callback {
-            override fun onFailure(call: Call, error: IOException) {
-                if (continuation.isActive) {
-                    continuation.resumeWithException(IOException("CONNECTION_FAILED", error))
-                }
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                try {
-                    response.use {
-                        if (continuation.isActive) {
-                            val result = read(it)
-                            if (continuation.isActive) continuation.resume(result)
-                        }
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, error: IOException) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(IOException("CONNECTION_FAILED", error))
                     }
-                } catch (error: Exception) {
-                    if (continuation.isActive) continuation.resumeWithException(error)
                 }
-            }
-        })
-    }
+
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        response.use {
+                            if (continuation.isActive) {
+                                val result = read(it)
+                                if (continuation.isActive) continuation.resume(result)
+                            }
+                        }
+                    } catch (error: Exception) {
+                        if (continuation.isActive) continuation.resumeWithException(error)
+                    }
+                }
+            })
+        }
 
     private suspend fun <T> withClient(pc: SavedPc, block: suspend (OkHttpClient) -> T): T {
         val identity = ClientIdentity.load(appContext)
@@ -459,11 +456,26 @@ internal fun validateUploadTransfer(
         false
     }
     if (
-        !validId || (expectedId != null && expectedId != transfer.transferId) ||
-        transfer.fileName != source.name || transfer.totalSize != source.size ||
-        transfer.sha256 != source.sha256 || transfer.transferredBytes !in 0..source.size ||
-        transfer.status !in setOf("created", "transferring", "paused", "verifying", "completed", "cancelled", "failed") ||
-        (transfer.status in setOf("verifying", "completed") && transfer.transferredBytes != source.size)
+        !validId ||
+        (expectedId != null && expectedId != transfer.transferId) ||
+        transfer.fileName != source.name ||
+        transfer.totalSize != source.size ||
+        transfer.sha256 != source.sha256 ||
+        transfer.transferredBytes !in 0..source.size ||
+        transfer.status !in
+        setOf(
+            "created",
+            "transferring",
+            "paused",
+            "verifying",
+            "completed",
+            "cancelled",
+            "failed"
+        ) ||
+        (
+            transfer.status in setOf("verifying", "completed") &&
+                transfer.transferredBytes != source.size
+            )
     ) {
         throw FileTransferException(
             "SERVER_TRANSFER_MISMATCH",

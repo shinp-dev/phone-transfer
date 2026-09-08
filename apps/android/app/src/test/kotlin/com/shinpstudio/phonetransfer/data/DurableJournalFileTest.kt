@@ -78,7 +78,9 @@ class DurableJournalFileTest {
         val pending = journalUpload()
         store(base).insert(pending)
         val failing = TransferOperationStore(
-            DurableJournalFile(base, ::syncTestDirectory, move = { _, _ -> throw IOException("move") })
+            DurableJournalFile(base, ::syncTestDirectory, move = { _, _ ->
+                throw IOException("move")
+            })
         )
         assertThrows(IOException::class.java) { failing.requestCancel(pending.operationId, 3) }
         assertEquals(pending, store(base).read().single())
@@ -150,7 +152,9 @@ class DurableJournalFileTest {
         val base = temporary.newFile()
         val pending = journalUpload()
         base.writeText(
-            TransferOperationPersistence.encode(listOf(pending)).replace("\"version\":2", "\"version\":1")
+            TransferOperationPersistence.encode(
+                listOf(pending)
+            ).replace("\"version\":2", "\"version\":1")
         )
         val store = store(base)
         assertEquals(pending, store.read().single())

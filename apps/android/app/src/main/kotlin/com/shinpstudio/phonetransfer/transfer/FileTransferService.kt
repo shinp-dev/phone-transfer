@@ -36,8 +36,8 @@ import com.shinpstudio.phonetransfer.protocol.Transfer
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -122,22 +122,26 @@ class FileTransferService : Service() {
             scope.launch(start = CoroutineStart.UNDISPATCHED) {
                 try {
                     withContext(Dispatchers.IO) {
-                    val persisted = if (request.action == ACTION_RESUME) {
-                        requireOperation(currentOperation)
-                    } else {
-                        acquireGrant(prepared)
-                    }
-                    if (persisted.completedFileName != null) {
-                        TransferStatusBus.complete(currentOperation, kind, persisted.completedFileName)
-                    } else if (persisted.cancelRequested) {
-                        if (finishCancellation(persisted)) {
-                            TransferStatusBus.cancel(currentOperation, kind)
+                        val persisted = if (request.action == ACTION_RESUME) {
+                            requireOperation(currentOperation)
                         } else {
-                            publishResumable(persisted, "CANCEL_PENDING", canResume = false)
+                            acquireGrant(prepared)
                         }
-                    } else {
-                        runTransfer(persisted, request.action == ACTION_RESUME)
-                    }
+                        if (persisted.completedFileName != null) {
+                            TransferStatusBus.complete(
+                                currentOperation,
+                                kind,
+                                persisted.completedFileName
+                            )
+                        } else if (persisted.cancelRequested) {
+                            if (finishCancellation(persisted)) {
+                                TransferStatusBus.cancel(currentOperation, kind)
+                            } else {
+                                publishResumable(persisted, "CANCEL_PENDING", canResume = false)
+                            }
+                        } else {
+                            runTransfer(persisted, request.action == ACTION_RESUME)
+                        }
                     }
                 } catch (error: CancellationException) {
                     val current = safeFind(currentOperation)
@@ -621,11 +625,11 @@ class FileTransferService : Service() {
         transferJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 withContext(Dispatchers.IO) {
-                if (finishCancellation(marked)) {
-                    TransferStatusBus.cancel(target, marked.kind.toTransferKind())
-                } else {
-                    publishResumable(marked, "CANCEL_PENDING", canResume = false)
-                }
+                    if (finishCancellation(marked)) {
+                        TransferStatusBus.cancel(target, marked.kind.toTransferKind())
+                    } else {
+                        publishResumable(marked, "CANCEL_PENDING", canResume = false)
+                    }
                 }
             } finally {
                 stopSelf(startId)

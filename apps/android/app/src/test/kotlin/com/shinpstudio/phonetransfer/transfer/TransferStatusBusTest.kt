@@ -1,7 +1,7 @@
 package com.shinpstudio.phonetransfer.transfer
 
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -28,7 +28,10 @@ class TransferStatusBusTest {
         bus.cancel(OPERATION_ID, TransferKind.Upload)
         bus.fail(OPERATION_ID, TransferKind.Upload, "stale")
         bus.restoreResumable(OPERATION_ID, TransferKind.Upload, 4, 8, "stale")
-        assertEquals(OTHER_OPERATION_ID, (bus.state.value as TransferServiceState.Running).operationId)
+        assertEquals(
+            OTHER_OPERATION_ID,
+            (bus.state.value as TransferServiceState.Running).operationId
+        )
     }
 
     @Test
@@ -47,6 +50,7 @@ class TransferStatusBusTest {
         assertTrue(bus.state.value is TransferServiceState.Completed)
         assertTrue(bus.begin(OTHER_OPERATION_ID, TransferKind.Upload))
     }
+
     @Test
     fun restartRestoreDoesNotDowngradeALiveRunningTransfer() {
         bus.begin(OPERATION_ID, TransferKind.Upload)

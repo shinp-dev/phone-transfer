@@ -294,6 +294,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
         } ?: return
         val kind = pending.kind.toTransferKind()
+        val reason = if (pending.cancelRequested) "CANCEL_PENDING" else "PROCESS_INTERRUPTED"
         // Provider access happens outside the journal monitor. Publish only if this snapshot
         // still exists, while serialized with completion/removal/new-operation persistence.
         val grantAvailable = try {
@@ -313,7 +314,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                             kind,
                             pending.committedOffset,
                             pending.totalSize ?: 0L,
-                            if (pending.cancelRequested) "CANCEL_PENDING" else "PROCESS_INTERRUPTED",
+                            reason,
                             grantAvailable && !pending.cancelRequested
                         )
                     }

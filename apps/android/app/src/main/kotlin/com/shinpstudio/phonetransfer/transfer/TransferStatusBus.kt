@@ -96,7 +96,11 @@ open class TransferStatusTracker {
         canResume: Boolean = true
     ) {
         val current = mutableState.value
-        if (current is TransferServiceState.RecoveryBlocked || current.isTerminal(operationId)) return
+        if (current is TransferServiceState.RecoveryBlocked ||
+            current.isTerminal(operationId)
+        ) {
+            return
+        }
         if (
             current is TransferServiceState.Running &&
             current.operationId != operationId ||

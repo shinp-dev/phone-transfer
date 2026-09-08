@@ -67,7 +67,13 @@ internal class DurableJournalFile(
     }
 
     private fun exists(file: File): Boolean = try {
-        check(Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).isRegularFile) {
+        check(
+            Files.readAttributes(
+                file.toPath(),
+                BasicFileAttributes::class.java,
+                LinkOption.NOFOLLOW_LINKS
+            ).isRegularFile
+        ) {
             "INVALID_TRANSFER_JOURNAL_FILE"
         }
         true

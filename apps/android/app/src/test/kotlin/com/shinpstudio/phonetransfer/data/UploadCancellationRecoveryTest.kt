@@ -96,7 +96,8 @@ class UploadCancellationRecoveryTest {
     fun lostCreateResponseThenNonRetryableFailureNeverDeletesIntent() = runTest {
         store().insert(initial.copy(serverTransferId = null, committedOffset = 0))
         val remote = Remote().apply {
-            createError = FileTransferException("TRANSFER_SERVICE_UNAVAILABLE", false, "unavailable")
+            createError =
+                FileTransferException("TRANSFER_SERVICE_UNAVAILABLE", false, "unavailable")
         }
         assertEquals(CancellationResult.Pending, recovery(remote).cancel(initial.operationId))
         assertTrue(store().read().single().cancelRequested)
@@ -142,10 +143,16 @@ class UploadCancellationRecoveryTest {
                 throw FileTransferException("TRANSFER_STATE_CONFLICT", false, "completed")
             }
         }
-        assertEquals(CancellationResult.Completed("resume.bin"), recovery(remote).cancel(initial.operationId))
+        assertEquals(
+            CancellationResult.Completed("resume.bin"),
+            recovery(remote).cancel(initial.operationId)
+        )
         assertEquals("resume.bin", store().read().single().completedFileName)
         assertEquals(listOf("get", "delete", "get"), remote.calls)
-        assertEquals(CancellationResult.Completed("resume.bin"), recovery(remote).cancel(initial.operationId))
+        assertEquals(
+            CancellationResult.Completed("resume.bin"),
+            recovery(remote).cancel(initial.operationId)
+        )
         assertEquals(3, remote.calls.size)
     }
 
