@@ -2,7 +2,7 @@
 
 AndroidスマートフォンとWindows PCの間で、同一LAN内だけでファイル・テキストを直接転送するアプリです。
 
-**現在は接続・認証・共有フォルダ・Windows安全ファイルI/O基盤まで実装済みですが、まだ転送可能なMVPではありません。** WindowsトレイからQR表示・端末承認・登録解除・受信フォルダ設定、AndroidからQR読取・確認番号表示・mTLS接続確認・PC登録保存/削除、mDNSによる保存済みPCの再発見ができます。Windows側にはhandle-safeな内部filesystem adapterがありますが、`/api/v1/shares`、upload、download、text等の転送APIはまだ有効化していません。[実装状況](docs/implementation-status.md)と[引き継ぎ資料](docs/handoff.md)を正本として確認してください。
+**現在は接続・認証・共有フォルダ・Windows安全ファイルI/O基盤に加え、認証済みの基本ファイルAPIまで実装済みですが、まだ転送可能なMVPではありません。** WindowsトレイからQR表示・端末承認・登録解除・受信フォルダ設定、AndroidからQR読取・確認番号表示・mTLS接続確認・PC登録保存/削除、mDNSによる保存済みPCの再発見ができます。Windows側ではhandle-safeなfilesystem adapterだけを経由してshare/list、非再開upload、download APIを提供します。AndroidのSAF転送UI・foreground service、durable resume/recovery、text/historyはまだ未実装です。[実装状況](docs/implementation-status.md)と[引き継ぎ資料](docs/handoff.md)を正本として確認してください。
 
 ## 構成
 
@@ -30,10 +30,10 @@ Windows側は選択したLANアダプターのprivate IPv4で待ち受けます�
 
 Windowsでトレイを起動: `dotnet run --project apps/windows/PhoneTransfer.App`。
 
-受信フォルダはローカルNTFS/ReFSに限定されます。Windowsの内部filesystem adapterは保持済みdirectory handle基準で1 componentずつ辿り、junction/symlink/reparse pointや差し替え競合をfail-closedに扱います。private stagingとno-overwrite completionも内部実装済みです。ただし、このadapterはまだHTTP経路へ公開していません。
+受信フォルダはローカルNTFS/ReFSに限定されます。Windows filesystem adapterは保持済みdirectory handle基準で1 componentずつ辿り、junction/symlink/reparse point/hardlinkや差し替え競合をfail-closedに扱います。基本ファイルAPIはこのadapterだけを使い、physical root pathを公開しません。uploadはprivate stagingへ4 MiB以下のchunkを書き、SHA-256検証後にsame-volume no-overwrite renameで完成させます。現在のtransfer registryはprocess-localで、PC crash後の再開・startup reconciliationはまだありません。
 
 ## 設計
 
-[Architecture](docs/architecture/overview.md) · [Protocol](docs/protocol/v1.md) · [Threat model](docs/security/threat-model.md) · [ADR](docs/decisions)
+[Architecture](docs/architecture/overview.md) · [Protocol](docs/protocol/v1.md) · [Threat model](docs/security/threat-model.md) · [Basic file transfer review](docs/security/basic-file-transfer-review.md) · [ADR](docs/decisions)
 
-外部サービスはビルド時の依存取得とGitHub CIにのみ使用します。製品の通信経路にはクラウド・中継サーバーを含めません。MVP完成には実Windows・Android端末でのQR/mDNS受入、基本list/upload/download、Android SAF、その後のresume/recovery実装と実機検証が必要です。
+外部サービスはビルド時の依存取得とGitHub CIにのみ使用します。製品の通信経路にはクラウド・中継サーバーを含めません。MVP完成には実Windows・Android端末でのQR/mDNS受入、Android SAF/foreground transfer、durable resume/recoveryと実機検証が必要です。
