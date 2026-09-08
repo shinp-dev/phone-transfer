@@ -1,6 +1,7 @@
 using System.Runtime.Versioning;
 using System.Text.Json;
 using PhoneTransfer.Host;
+using PhoneTransfer.Infrastructure.Storage;
 using Xunit;
 
 namespace PhoneTransfer.Tests;
@@ -53,6 +54,16 @@ public sealed class ShareConfigurationTests : IDisposable
         File.WriteAllText(Path.Combine(dataDirectory, "share-config.json"), payload);
 
         Assert.Throws<InvalidDataException>(() => new WindowsShareConfiguration(dataDirectory).GetRootPath());
+    }
+
+    [Fact]
+    public void ShareGenerationSurvivesRestartAndChangesEvenWhenSavingTheSameRoot()
+    {
+        var store = new WindowsShareConfigurationStore(dataDirectory);
+        var first = store.Save(shareDirectory);
+        Assert.NotEqual(Guid.Empty, first.Generation);
+        Assert.Equal(first, new WindowsShareConfigurationStore(dataDirectory).Read());
+        Assert.NotEqual(first.Generation, store.Save(shareDirectory).Generation);
     }
 
     public void Dispose()

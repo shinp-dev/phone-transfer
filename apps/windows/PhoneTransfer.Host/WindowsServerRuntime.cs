@@ -27,7 +27,7 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
     private readonly IPAddress address;
     private readonly WebApplication bootstrap;
     private readonly WebApplication api;
-    private readonly BasicFileTransferService fileTransfers;
+    private readonly DurableFileTransferService fileTransfers;
     private WindowsMdnsAdvertiser? mdns;
     public PairingCoordinator Pairing { get; }
     public bool MdnsAvailable => mdns is not null;
@@ -40,10 +40,27 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         certificate = new WindowsServerCertificate().GetOrCreate(identity.DeviceId);
         Pairing = new PairingCoordinator(devices, TimeProvider.System);
         bootstrap = PairingHost.Create(Pairing, certificate, address, BootstrapPort);
-        var shareConfigurations = new WindowsShareConfigurationStore(directory);
-        fileTransfers = new BasicFileTransferService(shareConfigurations, new WindowsShareFileSystem());
-        api = ServerHost.Create(identity, certificate, devices.Authorize, address, ApiPort,
-            device => devices.TryTouchLastSeen(device), fileTransfers);
+        SqliteTransferJournal? journal = null;
+        DurableFileTransferService? transfers = null;
+        try
+        {
+            var shareConfigurations = new WindowsShareConfigurationStore(directory);
+            var fileSystem = new WindowsShareFileSystem();
+            journal = new SqliteTransferJournal(Path.Combine(directory, "transfers.db"));
+            transfers = new DurableFileTransferService(shareConfigurations, fileSystem, fileSystem, journal,
+                id => devices.List().FirstOrDefault(device => device.DeviceId == id));
+            fileTransfers = transfers;
+            api = ServerHost.Create(identity, certificate, devices.Authorize, address, ApiPort,
+                device => devices.TryTouchLastSeen(device), fileTransfers);
+        }
+        catch
+        {
+            if (transfers is not null) transfers.Dispose();
+            else journal?.Dispose();
+            bootstrap.DisposeAsync().GetAwaiter().GetResult();
+            certificate.Dispose();
+            throw;
+        }
     }
 
     public static async Task<WindowsServerRuntime> StartAsync(string directory, IPAddress address, CancellationToken token)
@@ -51,6 +68,7 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
         var runtime = new WindowsServerRuntime(directory, address);
         try
         {
+            runtime.fileTransfers.Initialize();
             await runtime.api.StartAsync(token).ConfigureAwait(false);
             await runtime.bootstrap.StartAsync(token).ConfigureAwait(false);
             await runtime.StartMdnsAsync(token).ConfigureAwait(false);
@@ -118,23 +136,13 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
 
     public Task<bool> RevokeAsync(Guid id) => Task.Run(() =>
     {
-        var revoked = devices.Revoke(id);
-        if (!revoked) return false;
-        try
-        {
-            fileTransfers.CancelDevice(id);
-        }
-        catch (IOException)
-        {
-            // Revocation is authoritative even if best-effort staging deletion reports an OS cleanup failure.
-            // The request-by-request registry check denies further access immediately.
-        }
-        return true;
+        return fileTransfers.RevokeDevice(id, () => devices.Revoke(id));
     });
 
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        fileTransfers.StopAdmission();
         Pairing.ClosePairing();
         var discovery = mdns;
         mdns = null;

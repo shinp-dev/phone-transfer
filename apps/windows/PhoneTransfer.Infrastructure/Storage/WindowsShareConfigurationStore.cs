@@ -40,15 +40,20 @@ public sealed class WindowsShareConfigurationStore : IShareConfigurationStore
             throw new InvalidDataException("SHARE_CONFIGURATION_INVALID", exception);
         }
 
-        if (persisted is null || persisted.Version != 1 || string.IsNullOrWhiteSpace(persisted.RootPath))
+        if (persisted is null || persisted.Version is not (1 or 2) || string.IsNullOrWhiteSpace(persisted.RootPath))
             throw new InvalidDataException("SHARE_CONFIGURATION_INVALID");
 
-        return new ShareConfiguration(ValidateRoot(persisted.RootPath));
+        return persisted.Version == 1
+            ? Save(persisted.RootPath)
+            : persisted.Generation == Guid.Empty
+                ? throw new InvalidDataException("SHARE_CONFIGURATION_INVALID")
+                : new ShareConfiguration(ValidateRoot(persisted.RootPath), persisted.Generation);
     }
 
     public ShareConfiguration Save(string rootPath)
     {
         var normalized = ValidateRoot(rootPath);
+        var generation = Guid.NewGuid();
         Directory.CreateDirectory(dataDirectory);
         var temporaryPath = configurationPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
 
@@ -62,7 +67,7 @@ public sealed class WindowsShareConfigurationStore : IShareConfigurationStore
                        4096,
                        FileOptions.WriteThrough))
             {
-                JsonSerializer.Serialize(stream, new PersistedShareConfiguration(1, normalized), JsonOptions);
+                JsonSerializer.Serialize(stream, new PersistedShareConfiguration(2, normalized, generation), JsonOptions);
                 stream.Flush(true);
             }
 
@@ -81,7 +86,7 @@ public sealed class WindowsShareConfigurationStore : IShareConfigurationStore
             }
         }
 
-        return new ShareConfiguration(normalized);
+        return new ShareConfiguration(normalized, generation);
     }
 
     public void Clear()
@@ -149,5 +154,5 @@ public sealed class WindowsShareConfigurationStore : IShareConfigurationStore
         return child.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
     }
 
-    private sealed record PersistedShareConfiguration(int Version, string RootPath);
+    private sealed record PersistedShareConfiguration(int Version, string RootPath, Guid Generation = default);
 }

@@ -14,7 +14,7 @@ using Xunit.Abstractions;
 namespace PhoneTransfer.Tests;
 
 [SupportedOSPlatform("windows")]
-public sealed class WindowsShareFileSystemTests : IDisposable
+public sealed partial class WindowsShareFileSystemTests : IDisposable
 {
     private readonly string fixture = Path.Combine(Path.GetTempPath(), "PhoneTransferHandles", Guid.NewGuid().ToString("N"));
     private readonly ITestOutputHelper output;
