@@ -63,7 +63,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                                     } else {
                                         "受信"
                                     }
-                                "$actionが完了しました: ${transfer.fileName}"
+                                "${action}が完了しました: ${transfer.fileName}"
                             }
 
                             is TransferServiceState.Failed -> {
