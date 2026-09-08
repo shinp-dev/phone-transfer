@@ -117,6 +117,32 @@ public sealed class PairingCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public void AuthorizationReadDoesNotWriteLastSeenAndTouchIsThrottled()
+    {
+        using var certificate = PairingTestCertificates.Create();
+        var clock = new PairingTestClock();
+        var registry = new SqliteDeviceRegistry(Database, clock);
+        var pairing = new PairingCoordinator(registry, clock);
+        var id = Guid.Parse(pairing.Submit(PairingTestCertificates.Request(certificate, pairing.IssueChallenge().Token)).RequestId);
+        Assert.True(pairing.Approve(id));
+        var registered = Assert.Single(registry.List());
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+        var authorized = registry.Authorize(certificate)!;
+        Assert.Equal(registered.LastSeenAt, authorized.LastSeenAt);
+        Assert.Equal(registered.LastSeenAt, Assert.Single(registry.List()).LastSeenAt);
+        Assert.True(registry.TryTouchLastSeen(authorized));
+        var touched = Assert.Single(registry.List());
+        Assert.Equal(clock.GetUtcNow(), touched.LastSeenAt);
+        Assert.False(registry.TryTouchLastSeen(touched));
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        var stillFresh = registry.Authorize(certificate)!;
+        Assert.False(registry.TryTouchLastSeen(stillFresh));
+        Assert.Equal(touched.LastSeenAt, Assert.Single(registry.List()).LastSeenAt);
+    }
+
+    [Fact]
     public void ClosingQrPreservesApprovalReceiptAndDeniesUnapprovedSession()
     {
         using var certificate = PairingTestCertificates.Create();
