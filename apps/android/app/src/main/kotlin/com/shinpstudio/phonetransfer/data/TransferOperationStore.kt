@@ -212,6 +212,9 @@ internal object TransferOperationPersistence {
         check(size in 0..TransferWireRules.MAX_FILE_BYTES) { "INVALID_SOURCE_SIZE" }
         check(hash.matches(Regex("[a-f0-9]{64}"))) { "INVALID_SOURCE_SHA256" }
         check(operation.committedOffset in 0..size) { "INVALID_LOCAL_OFFSET" }
+        check(operation.committedOffset == 0L || operation.serverTransferId != null) {
+            "UPLOAD_TRANSFER_ID_REQUIRED"
+        }
     }
 
     private fun validateDownload(operation: PersistedTransferOperation) {
