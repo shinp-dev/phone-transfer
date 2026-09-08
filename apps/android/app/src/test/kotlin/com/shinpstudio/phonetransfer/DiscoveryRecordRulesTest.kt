@@ -9,8 +9,10 @@ import org.junit.Test
 class DiscoveryRecordRulesTest {
     private val id = UUID.randomUUID().toString()
 
-    private fun attributes(version: String = "1", deviceId: String = id) =
-        mapOf("version" to version.toByteArray(), "deviceId" to deviceId.toByteArray())
+    private fun attributes(version: String = "1", deviceId: String = id) = mapOf(
+        "version" to version.toByteArray(),
+        "deviceId" to deviceId.toByteArray()
+    )
 
     @Test
     fun acceptsPrivateIpv4WithCanonicalIdentity() {
@@ -30,12 +32,15 @@ class DiscoveryRecordRulesTest {
     @Test
     fun rejectsMalformedOrEmptyDeviceIdentity() {
         assertNull(
-            DiscoveryRecordRules.parse(attributes(deviceId = "not-a-uuid"), "10.0.0.2", 58443))
+            DiscoveryRecordRules.parse(attributes(deviceId = "not-a-uuid"), "10.0.0.2", 58443)
+        )
         assertNull(
             DiscoveryRecordRules.parse(
                 attributes(deviceId = "00000000-0000-0000-0000-000000000000"),
                 "10.0.0.2",
-                58443))
+                58443
+            )
+        )
     }
 
     @Test

@@ -32,10 +32,9 @@ class SavedPcRulesTest {
     fun addRejectsDuplicateWithoutReplacingExistingIdentity() {
         val existing = pc()
         val replacement = existing.copy(displayName = "Other")
-        val error =
-            assertThrows(IllegalStateException::class.java) {
-                SavedPcRules.add(listOf(existing), replacement)
-            }
+        val error = assertThrows(IllegalStateException::class.java) {
+            SavedPcRules.add(listOf(existing), replacement)
+        }
         assertEquals("PC_ALREADY_SAVED", error.message)
     }
 
@@ -52,21 +51,27 @@ class SavedPcRulesTest {
     @Test
     fun addEnforcesLimitAtCommitTime() {
         val full = (0 until SavedPcRules.LIMIT).map { pc() }
-        val error =
-            assertThrows(IllegalStateException::class.java) { SavedPcRules.add(full, pc()) }
+        val error = assertThrows(IllegalStateException::class.java) {
+            SavedPcRules.add(full, pc())
+        }
         assertEquals("PC_LIMIT", error.message)
     }
 
     @Test
     fun endpointUpdatePreservesStoredIdentityAndDoesNotResurrectRemovedPc() {
         val existing = pc()
-        val updated =
-            SavedPcRules.updateEndpoint(
-                listOf(existing), existing.deviceId, "https://192.168.1.99:58443")
+        val updated = SavedPcRules.updateEndpoint(
+            listOf(existing),
+            existing.deviceId,
+            "https://192.168.1.99:58443"
+        )
         assertEquals(
-            existing.copy(lastKnownEndpoint = "https://192.168.1.99:58443"), updated.single())
+            existing.copy(lastKnownEndpoint = "https://192.168.1.99:58443"),
+            updated.single()
+        )
         assertEquals(
             emptyList<SavedPc>(),
-            SavedPcRules.updateEndpoint(emptyList(), existing.deviceId, existing.lastKnownEndpoint))
+            SavedPcRules.updateEndpoint(emptyList(), existing.deviceId, existing.lastKnownEndpoint)
+        )
     }
 }
