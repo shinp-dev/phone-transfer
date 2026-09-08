@@ -10,6 +10,7 @@ import com.shinpstudio.phonetransfer.data.FileTransferException
 import com.shinpstudio.phonetransfer.data.FileTransferRepository
 import com.shinpstudio.phonetransfer.data.NsdDiscovery
 import com.shinpstudio.phonetransfer.data.PairingRepository
+import com.shinpstudio.phonetransfer.data.PersistedTransferOperation
 import com.shinpstudio.phonetransfer.data.SavedPc
 import com.shinpstudio.phonetransfer.data.TransferOperationStore
 import com.shinpstudio.phonetransfer.domain.RemotePathRules
@@ -100,14 +101,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     try {
                         val refreshed = repository.acceptDiscovery(candidate) ?: return@collect
                         mutableState.update { current ->
-                            current.copy(
-                                pcs = repository.saved(),
-                                connectionLabel =
+                            val label =
                                 if (current.connectionLabel == "PC未接続") {
                                     "${refreshed.displayName} をLAN上で再検出しました"
                                 } else {
                                     current.connectionLabel
                                 }
+                            current.copy(
+                                pcs = repository.saved(),
+                                connectionLabel = label
                             )
                         }
                     } catch (error: CancellationException) {
@@ -291,23 +293,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 null
             }
         } ?: return
-        val kind =
-            if (pending.kind == DurableTransferKind.Upload) TransferKind.Upload else TransferKind.Download
-        val grantFlag =
-            if (pending.kind == DurableTransferKind.Upload) {
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-            } else {
-                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            }
-        val persistedGrantAvailable =
-            getApplication<Application>().contentResolver.persistedUriPermissions.any { permission ->
-                permission.uri == Uri.parse(pending.uri) &&
-                    if (grantFlag == Intent.FLAG_GRANT_READ_URI_PERMISSION) {
-                        permission.isReadPermission
-                    } else {
-                        permission.isWritePermission
-                    }
-            }
+        val kind = pending.kind.toTransferKind()
+        val persistedGrantAvailable = hasPersistedGrant(pending)
         TransferStatusBus.resumable(
             pending.operationId,
             kind,
@@ -320,6 +307,23 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             FileTransferService.cancel(getApplication(), pending.operationId)
         }
     }
+
+    private fun hasPersistedGrant(operation: PersistedTransferOperation): Boolean {
+        val expectedUri = Uri.parse(operation.uri)
+        val readGrant = operation.kind == DurableTransferKind.Upload
+        return getApplication<Application>().contentResolver.persistedUriPermissions.any { permission ->
+            if (permission.uri != expectedUri) {
+                false
+            } else if (readGrant) {
+                permission.isReadPermission
+            } else {
+                permission.isWritePermission
+            }
+        }
+    }
+
+    private fun DurableTransferKind.toTransferKind(): TransferKind =
+        if (this == DurableTransferKind.Upload) TransferKind.Upload else TransferKind.Download
 
     private suspend fun loadRemote(pc: SavedPc, path: String) {
         val share = fileRepository.listShares(pc).firstOrNull()
