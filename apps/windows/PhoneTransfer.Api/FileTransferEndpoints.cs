@@ -26,11 +26,11 @@ public static class FileTransferEndpoints
         ArgumentNullException.ThrowIfNull(service);
         endpoints.MapGet("/api/v1/shares", (HttpContext context) => ListShares(context, service));
         endpoints.MapGet("/api/v1/shares/{shareId}/entries", (HttpContext context) => ListEntries(context, service));
-        endpoints.MapPost("/api/v1/transfers", (HttpContext context) => CreateTransferAsync(context, service));
+        endpoints.MapPost("/api/v1/transfers", (Delegate)((HttpContext context) => CreateTransferAsync(context, service)));
         endpoints.MapGet("/api/v1/transfers/{transferId}", (HttpContext context) => GetTransfer(context, service));
         endpoints.MapDelete("/api/v1/transfers/{transferId}", (HttpContext context) => CancelTransfer(context, service));
         endpoints.MapMethods("/api/v1/transfers/{transferId}/content", ["PATCH"],
-            (HttpContext context) => AppendChunkAsync(context, service));
+            (Delegate)((HttpContext context) => AppendChunkAsync(context, service)));
         endpoints.MapPost("/api/v1/transfers/{transferId}/complete", (HttpContext context) => CompleteTransfer(context, service));
         endpoints.MapGet("/api/v1/shares/{shareId}/content", (HttpContext context) => DownloadAsync(context, service));
     }
