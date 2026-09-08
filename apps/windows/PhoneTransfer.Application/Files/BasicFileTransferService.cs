@@ -182,6 +182,7 @@ public sealed class BasicFileTransferService : IDisposable
             var transfer = OwnedTransfer(device, transferId);
             if (transfer.State is not (TransferState.Created or TransferState.Transferring or TransferState.Paused))
                 throw new BasicFileTransferException("TRANSFER_STATE_CONFLICT", "The transfer cannot accept content in its current state.");
+            EnsureTransferShareCurrent(transfer);
 
             long next;
             try
@@ -221,6 +222,7 @@ public sealed class BasicFileTransferService : IDisposable
             if (transfer.State == TransferState.Completed) return Snapshot(transfer);
             if (IsTerminal(transfer.State))
                 throw new BasicFileTransferException("TRANSFER_STATE_CONFLICT", "The transfer is already terminal.");
+            EnsureTransferShareCurrent(transfer);
             if (transfer.CommittedBytes != transfer.TotalSize)
                 throw new BasicFileTransferException("TRANSFER_INCOMPLETE", "The transfer has not received all bytes yet.", true);
 
@@ -417,6 +419,16 @@ public sealed class BasicFileTransferService : IDisposable
             }
             return currentShareId;
         }
+    }
+
+    private void EnsureTransferShareCurrent(TransferRecord transfer)
+    {
+        var configuration = ReadConfiguration();
+        if (configuration is not null && GetShareId(configuration) == transfer.ShareId) return;
+        transfer.State = TransferTransitions.Move(transfer.State, TransferState.Cancelled);
+        transfer.UpdatedAt = clock.GetUtcNow();
+        CleanupResources(transfer);
+        throw new BasicFileTransferException("SHARE_NOT_FOUND", "The configured share changed during this transfer.");
     }
 
     private TransferRecord OwnedTransfer(PairedDevice device, Guid transferId)
