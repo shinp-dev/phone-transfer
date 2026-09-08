@@ -18,11 +18,11 @@ The cryptographic primitives passed fifteen added test cases. The Windows backen
 
 The Android saved-PC store is application-singleton owned and updates its last-known endpoint atomically. Production mDNS is now wired: Windows advertises `_phone-transfer._tcp` through the Windows DNS-SD API on the selected private IPv4 interface with only `version` and stable `deviceId` TXT values; Android uses `NsdManager` with a multicast lock and accepts only private IPv4 API endpoints on port 58443. A changed endpoint is persisted only after the stored SPKI pin, client certificate and `/api/v1/info` stable device ID all verify. Discovery remains untrusted and QR remains the trust bootstrap/fallback.
 
-## Phase 3 — share configuration implemented; safe file access pending
+## Phase 3 — internal handle-safe filesystem adapter; transfer APIs disabled
 
 Windows can select, persist and clear one receive-folder root without exposing it through the network API. The setting is versioned and stored separately from paired-device state. Configuration accepts only existing local NTFS/ReFS folders, rejects UNC paths, volume roots, overlap with the application's own data directory and reparse points in the selected path ancestry, and writes updates through a same-directory temporary file before replace/move. This is a configuration-time guard only; it is not a substitute for the handle-safe file adapter required by ADR 008.
 
-No list/upload/download route is enabled by this setting. File APIs remain disabled until handle-based containment and adversarial junction/reparse tests pass.
+The standalone Windows adapter now provides pinned root/traversal, bounded handle-based listing, stable file reads, private ACL-protected staging and atomic no-overwrite completion. See ADR 008 for containment invariants, ownership, adversarial tests and filesystem coverage limits. Windows CI at `461b50df6da429831c6d5176efbad0790a351faa` passed format, Release build and 107 tests without skips; subsequent revisions must pass the same gates. See [PR #7](https://github.com/shinp-dev/phone-transfer/pull/7) for final CI evidence. No list/upload/download route is enabled; quotas, authorization orchestration, durable records and resume/recovery remain separate work.
 
 ## Post-PR5 audit hardening
 
@@ -34,11 +34,11 @@ The first whole-repository review after PR #5 found no critical/high issue that 
 - Android saved-PC persistence now writes a versioned envelope while continuing to read the pre-versioning list format and retaining the serialized `endpoint` field for compatibility;
 - Windows Forms code consumes LAN adapter discovery through the Host boundary rather than directly referencing Infrastructure discovery types.
 
-Operational/release hardening still outside this code increment: protect `main` with required PR/CI checks, decide and enforce the explicit Windows private-data ACL policy before staging files are introduced, and optionally pin third-party GitHub Actions to immutable commit SHAs.
+Operational/release hardening still outside this code increment: protect `main` with required PR/CI checks, apply the explicit per-user ACL policy consistently to existing application-state stores (new staging already has an atomic protected current-user DACL), and optionally pin third-party GitHub Actions to immutable commit SHAs.
 
 ## Remaining Phase 2–6
 
-Remaining: physical Android-to-Windows pairing and mDNS acceptance, Windows handle-safe filesystem, transfer endpoints/records, upload/download/resume orchestration, Android SAF/foreground service/share intents, text/history UI and recovery scheduler. Host factories implement `/api/v1/info` and the two `/pairing/v1/requests` routes; remaining OpenAPI routes are design contracts.
+Remaining: physical Android-to-Windows pairing and mDNS acceptance, transfer endpoints/records, upload/download/resume orchestration, Android SAF/foreground service/share intents, text/history UI and recovery scheduler. Host factories implement `/api/v1/info` and the two `/pairing/v1/requests` routes; remaining OpenAPI routes are design contracts.
 
 The tray starts the isolated bootstrap listener and the mTLS info listener on one selected private IPv4 LAN adapter and attempts DNS-SD advertisement without making it a prerequisite for the authenticated listeners. No file or text transfer route is implemented.
 
@@ -51,6 +51,6 @@ Android: NSD on real Wi-Fi, QR camera, mTLS Keystore signature, DHCP/Wi-Fi chang
 ## Continuation order
 
 1. Verify Windows tray, QR pairing and mDNS on physical Windows/Android devices, including a DHCP address change.
-2. Implement the Windows handle-safe file adapter and adversarial containment tests without exposing network file routes first.
+2. Accept the standalone Windows handle-safe adapter after Windows CI and review of ADR 008; keep network file routes disabled in this increment.
 3. Add basic list/upload/download endpoints and Android SAF integration.
 4. Continue durable resume/recovery, background transfer and text/history in separate increments.
