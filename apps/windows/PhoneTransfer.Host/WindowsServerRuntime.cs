@@ -115,7 +115,22 @@ public sealed class WindowsServerRuntime : IAsyncDisposable
     }
 
     public Task<IReadOnlyList<PairedDevice>> GetDevicesAsync() => Task.Run(devices.List);
-    public Task<bool> RevokeAsync(Guid id) => Task.Run(() => devices.Revoke(id));
+
+    public Task<bool> RevokeAsync(Guid id) => Task.Run(() =>
+    {
+        var revoked = devices.Revoke(id);
+        if (!revoked) return false;
+        try
+        {
+            fileTransfers.CancelDevice(id);
+        }
+        catch (IOException)
+        {
+            // Revocation is authoritative even if best-effort staging deletion reports an OS cleanup failure.
+            // The request-by-request registry check denies further access immediately.
+        }
+        return true;
+    });
 
     public async ValueTask DisposeAsync()
     {
