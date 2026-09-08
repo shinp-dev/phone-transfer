@@ -48,21 +48,26 @@ class FileTransferService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_CANCEL) {
+        val request = intent
+        if (request == null) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        if (request.action == ACTION_CANCEL) {
             transferJob?.cancel(CancellationException("USER_CANCELLED"))
             if (transferJob?.isActive != true) stopSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action !in setOf(ACTION_UPLOAD, ACTION_DOWNLOAD)) {
+        if (request.action !in setOf(ACTION_UPLOAD, ACTION_DOWNLOAD)) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
         if (transferJob?.isActive == true) return START_NOT_STICKY
 
         val currentOperation =
-            intent.getStringExtra(EXTRA_OPERATION_ID) ?: UUID.randomUUID().toString()
+            request.getStringExtra(EXTRA_OPERATION_ID) ?: UUID.randomUUID().toString()
         val kind =
-            if (intent.action == ACTION_UPLOAD) {
+            if (request.action == ACTION_UPLOAD) {
                 TransferKind.Upload
             } else {
                 TransferKind.Download
@@ -75,7 +80,7 @@ class FileTransferService : Service() {
         transferJob =
             scope.launch {
                 try {
-                    runTransfer(intent, currentOperation, kind)
+                    runTransfer(request, currentOperation, kind)
                 } catch (error: CancellationException) {
                     TransferStatusBus.cancel(currentOperation, kind)
                 } catch (error: FileTransferException) {
