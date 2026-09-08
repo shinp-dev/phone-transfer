@@ -1,0 +1,60 @@
+name: One-shot Android audit fix
+
+on:
+  push:
+    branches:
+      - feature/android-durable-transfer-recovery
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply cancellation cleanup fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("apps/android/app/src/main/kotlin/com/shinpstudio/phonetransfer/transfer/FileTransferService.kt")
+          text = path.read_text()
+          text = text.replace(
+              "import kotlinx.coroutines.Job\nimport kotlinx.coroutines.SupervisorJob\n",
+              "import kotlinx.coroutines.Job\nimport kotlinx.coroutines.NonCancellable\nimport kotlinx.coroutines.SupervisorJob\n",
+          )
+          text = text.replace(
+              "import kotlinx.coroutines.launch\n",
+              "import kotlinx.coroutines.launch\nimport kotlinx.coroutines.withContext\n",
+          )
+          old = '''                    if (current?.cancelRequested == true) {
+                        if (finishCancellation(current)) {
+                            TransferStatusBus.cancel(currentOperation, kind)
+                        } else {
+                            publishResumable(current, "CANCEL_PENDING", canResume = false)
+                        }
+                    } else if (current != null) {'''
+          new = '''                    if (current?.cancelRequested == true) {
+                        val converged =
+                            withContext(NonCancellable) {
+                                finishCancellation(current)
+                            }
+                        if (converged) {
+                            TransferStatusBus.cancel(currentOperation, kind)
+                        } else {
+                            publishResumable(current, "CANCEL_PENDING", canResume = false)
+                        }
+                    } else if (current != null) {'''
+          if old not in text:
+              raise SystemExit("target cancellation block not found")
+          path.write_text(text.replace(old, new))
+      - name: Commit audit fix
+        run: |
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/android/app/src/main/kotlin/com/shinpstudio/phonetransfer/transfer/FileTransferService.kt
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: finish durable cancellation after coroutine cancel"
+          git push
