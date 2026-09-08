@@ -57,6 +57,32 @@ public sealed class BasicFileTransferSecurityTests : IDisposable
         Assert.False(File.Exists(Path.Combine(Root, "pending.bin")));
     }
 
+    [Fact]
+    public void ClearingTheShareCancelsAnExistingUploadBeforeAnotherWrite()
+    {
+        var device = Device();
+        var store = new MutableConfigurationStore(Root);
+        using var service = new BasicFileTransferService(store, new WindowsShareFileSystem());
+        var shareId = Assert.Single(service.ListShares(device)).Id;
+        var payload = "first chunk"u8.ToArray();
+        var transfer = service.CreateTransfer(
+            device,
+            shareId,
+            RelativeSharePath.Parse("pending.bin"),
+            payload.Length * 2,
+            Convert.ToHexStringLower(SHA256.HashData(payload.Concat(payload).ToArray())),
+            Guid.NewGuid());
+        service.Append(device, transfer.TransferId, 0, payload);
+        store.Clear();
+
+        var error = Assert.Throws<BasicFileTransferException>(() =>
+            service.Append(device, transfer.TransferId, payload.Length, payload));
+        Assert.Equal("SHARE_NOT_FOUND", error.Code);
+        Assert.Equal(TransferState.Cancelled, service.GetTransfer(device, transfer.TransferId).State);
+        Assert.Empty(Directory.GetDirectories(Root, ".phone-transfer-staging-*"));
+        Assert.False(File.Exists(Path.Combine(Root, "pending.bin")));
+    }
+
     public void Dispose()
     {
         try
@@ -83,5 +109,17 @@ public sealed class BasicFileTransferSecurityTests : IDisposable
         public ShareConfiguration? Read() => new(root);
         public ShareConfiguration Save(string rootPath) => throw new NotSupportedException();
         public void Clear() => throw new NotSupportedException();
+    }
+
+    private sealed class MutableConfigurationStore(string root) : IShareConfigurationStore
+    {
+        private string? currentRoot = root;
+        public ShareConfiguration? Read() => currentRoot is null ? null : new(currentRoot);
+        public ShareConfiguration Save(string rootPath)
+        {
+            currentRoot = rootPath;
+            return new(rootPath);
+        }
+        public void Clear() => currentRoot = null;
     }
 }
