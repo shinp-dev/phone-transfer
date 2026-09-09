@@ -49,7 +49,12 @@ class ClientIdentity(val deviceId: String, val key: PrivateKey, val certificate:
                     initialize(
                         KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
                             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                            .setDigests(KeyProperties.DIGEST_SHA256)
+                            // Conscrypt signs a TLS-computed digest with NONEwithECDSA.
+                            // SHA-256 remains authorized for pairing proof/certificate signing.
+                            .setDigests(
+                                KeyProperties.DIGEST_SHA256,
+                                KeyProperties.DIGEST_NONE
+                            )
                             .setUserAuthenticationRequired(false)
                             .build()
                     )

@@ -26,6 +26,8 @@ Windows provides single-use 120-second QR challenges, ECDSA P-256 proof verifica
 
 Android provides QR validation/scanning, Android Keystore identity, pinned HTTPS registration, signed polling, comparison-code UI, mTLS `/api/v1/info` verification, saved-PC persistence and local removal.
 
+Physical Pixel 8a acceptance confirmed QR approval, saved-PC persistence and repeated client-certificate authentication over TLS 1.3 after authorizing both `DIGEST_SHA256` and `DIGEST_NONE` on newly generated Android Keystore EC keys. Conscrypt signs a TLS-computed digest through `NONEwithECDSA`; limiting the key to `DIGEST_SHA256` allowed pairing proofs but caused the first mTLS API handshake to fail. Wider file-transfer, text-delivery, restart and revocation acceptance remains pending.
+
 Windows advertises `_phone-transfer._tcp` on the selected private IPv4 interface and Android discovers it with `NsdManager`. Discovery data is routing metadata only; endpoint changes are saved only after the stored SPKI pin, client identity and stable Device ID verify.
 
 ## Phase 3 — authenticated handle-safe file transfer implemented
