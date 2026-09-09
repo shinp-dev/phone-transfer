@@ -21,6 +21,7 @@
 - Android client identityはKeystore、Windows server identityはcurrent-user non-exportable CNG key。
 - 登録後APIはmTLS。Windowsはpaired-device revocationをrequestごとに再確認。
 - mDNS/NSDはrouting metadataのみで、endpoint変更はSPKI pin/client identity/Device ID検証後に保存。
+- Pixel 8a実機で、Android Keystore EC鍵に`DIGEST_SHA256`と`DIGEST_NONE`を許可した状態のTLS 1.3 mTLS接続とpaired-PC保存を確認済み。`DIGEST_SHA256`のみではpairing proofは成功してもConscryptの`NONEwithECDSA`署名ができず、最初のAPI handshakeが失敗していた。
 
 ### Windows handle-safe filesystem
 
@@ -131,12 +132,14 @@ CI greenとphysical acceptanceを混同しない。
 
 ### 3. Android ↔ Windows実機acceptance
 
+QR pairing / comparison code / TLS 1.3 mTLS / paired-PC保存はPixel 8aで確認済み。残りを継続する。
+
 ファイル系:
 
-- QR/comparison-code pairing;
+- QR/comparison-code pairing（Pixel 8aで確認済み）;
 - real Wi-Fi mDNS;
-- mTLS;
-- basic upload/download;
+- mTLS（Pixel 8a ↔ WindowsのTLS 1.3で確認済み）;
+- basic upload/download（Pixel 8a ↔ Windows共有直下で確認済み）;
 - seekable / nonseekable-reopenable SAF provider;
 - persistable grant accept/reject;
 - hashing/create/chunk/completed境界のprocess kill;

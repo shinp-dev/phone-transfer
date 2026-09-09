@@ -26,6 +26,8 @@ Windows provides single-use 120-second QR challenges, ECDSA P-256 proof verifica
 
 Android provides QR validation/scanning, Android Keystore identity, pinned HTTPS registration, signed polling, comparison-code UI, mTLS `/api/v1/info` verification, saved-PC persistence and local removal.
 
+Physical Pixel 8a acceptance confirmed QR approval, saved-PC persistence and repeated client-certificate authentication over TLS 1.3 after authorizing both `DIGEST_SHA256` and `DIGEST_NONE` on newly generated Android Keystore EC keys. Conscrypt signs a TLS-computed digest through `NONEwithECDSA`; limiting the key to `DIGEST_SHA256` allowed pairing proofs but caused the first mTLS API handshake to fail. Basic PC-to-Android download and Android-to-PC upload to the Windows share root are also confirmed. Wider interruption, provider, text-delivery, restart and revocation acceptance remains pending.
+
 Windows advertises `_phone-transfer._tcp` on the selected private IPv4 interface and Android discovers it with `NsdManager`. Discovery data is routing metadata only; endpoint changes are saved only after the stored SPKI pin, client identity and stable Device ID verify.
 
 ## Phase 3 — authenticated handle-safe file transfer implemented
@@ -35,6 +37,8 @@ Windows can select, persist and clear one local NTFS/ReFS receive root. UNC path
 The authenticated file API includes share/listing, durable upload create/status/chunk/cancel/complete and stable-handle download with strong ETag/range support. Transfer ownership is bound to the authenticated paired device and permissions are checked per operation. Physical root paths and native exception details are not exposed over the wire.
 
 Android uses `ACTION_OPEN_DOCUMENT` and `CREATE_DOCUMENT`; content URIs remain capabilities and are never converted to filesystem paths. Long-running file I/O is owned by a non-exported `dataSync` Foreground Service.
+
+Physical testing found that a share-root upload correctly supplies an empty remote directory path, but transfer-intent admission originally rejected that value and misleadingly reported `LOCAL_JOURNAL_UNAVAILABLE`. Upload admission now permits only that intentional empty root path; other required extras and download paths remain non-empty. See [Android root-upload investigation](known-issues/android-root-upload-local-journal-unavailable.md).
 
 ## Durable upload recovery — implemented on both sides
 
@@ -107,7 +111,7 @@ This is the largest remaining MVP gate. Windows 11 + Android should be exercised
 
 - QR pairing / comparison code and real-Wi-Fi mDNS;
 - Android Keystore mTLS requests;
-- basic upload/download;
+- basic upload/download (Pixel 8a ↔ Windows share root confirmed);
 - seekable and nonseekable/reopenable SAF providers;
 - providers that accept and reject persistable grants;
 - upload process kill before create, during upload and after server completion;

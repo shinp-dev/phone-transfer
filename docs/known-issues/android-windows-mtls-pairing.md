@@ -4,9 +4,14 @@ Updated: 2026-09-09
 
 ## Status
 
-Open. QR registration and PC-side approval complete, but the Android app fails the first authenticated API request and does not save the paired PC. The failure occurs during the TLS handshake on the API listener, before an HTTP request reaches the application.
+Resolved on the physical Pixel 8a. QR registration and PC-side approval originally completed, but the Android app failed the first authenticated API request and did not save the paired PC. The failure occurred during the TLS handshake on the API listener, before an HTTP request reached the application.
 
-This note separates observed facts from hypotheses. TLS 1.2 has not yet been tested, and no broad certificate-validation bypass has been applied.
+The Android Keystore EC key authorized only `DIGEST_SHA256`. Conscrypt requires `NONEwithECDSA` when it signs a TLS-computed digest with an opaque Android Keystore key. Authorizing both `DIGEST_SHA256` and `DIGEST_NONE`, regenerating the test identity explicitly, and pairing again fixed the failure without changing TLS versions or certificate validation.
+
+References:
+
+- [Android `KeyGenParameterSpec.Builder.setDigests` documentation](https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder.html#setDigests\(java.lang.String...\))
+- [Android 35 Conscrypt delegated EC signing implementation](https://android.googlesource.com/platform/prebuilts/fullsdk/sources/+/refs/heads/androidx-constraintlayout-release/android-35/com/android/org/conscrypt/CryptoUpcalls.java#64)
 
 ## Test environment
 
@@ -92,7 +97,7 @@ C1C92D45BA677603136285D67385EA0F128A1E46
 
 `certutil -user -verify` then reported the certificate as peer-trusted. The Windows app was restarted and the same failure was reproduced. This makes a simple missing current-user peer-trust entry insufficient to explain the failure.
 
-The temporary certificate is still a local diagnostic artifact and must be removed after investigation:
+The temporary certificate was removed after the investigation. The cleanup command used for this diagnostic artifact was:
 
 ```powershell
 Remove-Item -LiteralPath 'Cert:\CurrentUser\TrustedPeople\C1C92D45BA677603136285D67385EA0F128A1E46'
@@ -121,32 +126,49 @@ Local build outputs used during diagnosis:
 - Windows: `apps/windows/PhoneTransfer.App/bin/Debug/net10.0-windows/PhoneTransfer.App.exe`
 - Android: `apps/android/app/build/outputs/apk/debug/app-debug.apk`
 
-## Current hypotheses
+## Confirmed root cause and resolution
 
-The evidence supports investigation of these possibilities, but does not yet prove any of them:
+The original key was generated with:
 
-1. TLS 1.3 client-certificate interoperability between Android Conscrypt/Android Keystore and Windows Schannel/Kestrel.
-2. Android failing while producing or sending the TLS client `CertificateVerify`, despite the same key successfully signing the pairing proof.
-3. Windows Schannel terminating client-certificate processing before Kestrel's managed validation callback is invoked.
-4. A protocol or signature-scheme mismatch that is hidden by the generic EOF/read-error messages.
+```kotlin
+.setDigests(KeyProperties.DIGEST_SHA256)
+```
 
-The shared-folder configuration is not a leading hypothesis because the request never reaches HTTP middleware or an API endpoint.
+That key could create the `SHA256withECDSA` pairing proof, but could not perform Conscrypt's raw `NONEwithECDSA` operation for the TLS client `CertificateVerify`. Key-manager lookup therefore succeeded before the TLS handshake ended during private-key use.
 
-## Recommended next investigation
+New identities now authorize both required operations:
 
-1. Capture .NET `System.Net.Security` EventSource events for the API handshake without changing protocol settings.
-2. If those events remain inconclusive, capture only TCP 58443 with an elevated packet trace. Determine the ServerHello-selected TLS version, whether the client certificate flight is sent, and the direction of the final FIN/RST or TLS alert.
-3. Only after recording the negotiated version, test TLS 1.2 for identity-bearing Android clients while leaving bootstrap pairing on the modern default. Treat this as a diagnostic first, not a permanent fix.
-4. If TLS 1.2 succeeds, document the exact TLS 1.3 failure and decide whether a narrowly scoped compatibility policy is acceptable.
-5. If TLS 1.2 also fails, focus on Schannel client-certificate validation and certificate-chain design. Do not introduce an accept-any certificate callback without a reviewed replacement trust model.
-6. After testing, remove the temporary certificate from `CurrentUser\TrustedPeople` by its exact thumbprint.
+```kotlin
+.setDigests(
+    KeyProperties.DIGEST_SHA256,
+    KeyProperties.DIGEST_NONE
+)
+```
+
+Because Android Keystore authorizations are fixed when the key is created, the old test identity was not silently replaced. The PC registration was removed explicitly, Android app data was cleared explicitly, and a new identity was registered.
+
+After the fix, Kestrel recorded the new registered certificate as `authorized=True` and established repeated connections using `Tls13`. Android saved the paired PC successfully. TLS 1.2 fallback was not needed or tested.
+
+The final Android build, with temporary diagnostic logging removed, was installed over the successful identity and reconnected correctly from the saved-PC UI.
+
+The temporary old client certificate previously added to `CurrentUser\TrustedPeople` was no longer present when cleanup was checked.
+
+## Remaining physical acceptance
+
+The pairing-specific failure is resolved. Continue the wider acceptance checklist with:
+
+1. Android-to-PC text/URL send.
+2. File listing, upload and download.
+3. PC-side registration revocation followed by a rejected Android request.
+4. Reconnection after app restart, device restart and Wi-Fi interruption.
 
 ## Acceptance condition
 
-This issue is resolved only when, on the physical Pixel 8a and Windows PC:
+Pairing and initial authenticated connection now satisfy:
 
 - approval is followed by a successful mTLS `/api/v1/info` request;
 - Android saves the paired PC;
-- subsequent text and file API requests authenticate with the registered client identity;
-- revocation still takes effect on every request; and
+- repeated API requests authenticate with the registered client identity; and
 - no global or accept-any certificate trust bypass is introduced.
+
+File transfer, text delivery and revocation behavior remain part of the broader physical-device acceptance work rather than this pairing defect.
