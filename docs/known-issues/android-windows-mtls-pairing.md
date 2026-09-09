@@ -97,7 +97,7 @@ C1C92D45BA677603136285D67385EA0F128A1E46
 
 `certutil -user -verify` then reported the certificate as peer-trusted. The Windows app was restarted and the same failure was reproduced. This makes a simple missing current-user peer-trust entry insufficient to explain the failure.
 
-The temporary certificate is still a local diagnostic artifact and must be removed after investigation:
+The temporary certificate was removed after the investigation. The cleanup command used for this diagnostic artifact was:
 
 ```powershell
 Remove-Item -LiteralPath 'Cert:\CurrentUser\TrustedPeople\C1C92D45BA677603136285D67385EA0F128A1E46'

@@ -139,7 +139,7 @@ QR pairing / comparison code / TLS 1.3 mTLS / paired-PC保存はPixel 8aで確�
 - QR/comparison-code pairing（Pixel 8aで確認済み）;
 - real Wi-Fi mDNS;
 - mTLS（Pixel 8a ↔ WindowsのTLS 1.3で確認済み）;
-- basic upload/download;
+- basic upload/download（Pixel 8a ↔ Windows共有直下で確認済み）;
 - seekable / nonseekable-reopenable SAF provider;
 - persistable grant accept/reject;
 - hashing/create/chunk/completed境界のprocess kill;

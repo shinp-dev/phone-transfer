@@ -430,7 +430,10 @@ class FileTransferService : Service() {
     ): PersistedTransferOperation {
         val deviceId = intent.requireString(EXTRA_DEVICE_ID)
         val shareId = intent.requireString(EXTRA_SHARE_ID)
-        val remotePath = intent.requireString(EXTRA_REMOTE_PATH)
+        val remotePath = intent.requireString(
+            EXTRA_REMOTE_PATH,
+            allowEmpty = kind == TransferKind.Upload
+        )
         val uri = intent.requireString(EXTRA_URI).toUri()
         val now = System.currentTimeMillis()
         val operation =
@@ -773,13 +776,8 @@ class FileTransferService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun Intent.requireString(name: String): String =
-        getStringExtra(name)?.takeIf { it.isNotEmpty() }
-            ?: throw FileTransferException(
-                "INVALID_TRANSFER_INTENT",
-                false,
-                "The transfer request is incomplete."
-            )
+    private fun Intent.requireString(name: String, allowEmpty: Boolean = false): String =
+        requireIntentStringValue(getStringExtra(name), allowEmpty)
 
     companion object {
         private const val CHANNEL_ID = "file-transfer"
@@ -846,3 +844,11 @@ class FileTransferService : Service() {
         }
     }
 }
+
+internal fun requireIntentStringValue(value: String?, allowEmpty: Boolean = false): String =
+    value?.takeIf { allowEmpty || it.isNotEmpty() }
+        ?: throw FileTransferException(
+            "INVALID_TRANSFER_INTENT",
+            false,
+            "The transfer request is incomplete."
+        )
