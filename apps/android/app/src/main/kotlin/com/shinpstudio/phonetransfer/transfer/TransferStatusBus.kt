@@ -178,3 +178,23 @@ open class TransferStatusTracker {
 }
 
 object TransferStatusBus : TransferStatusTracker()
+
+object TransferRuntimeBus {
+    private val mutableActiveOperationId = MutableStateFlow<String?>(null)
+    val activeOperationId = mutableActiveOperationId.asStateFlow()
+
+    @Synchronized
+    fun begin(operationId: String) {
+        check(mutableActiveOperationId.value in setOf(null, operationId)) {
+            "ANOTHER_TRANSFER_IS_ACTIVE"
+        }
+        mutableActiveOperationId.value = operationId
+    }
+
+    @Synchronized
+    fun finish(operationId: String) {
+        if (mutableActiveOperationId.value == operationId) {
+            mutableActiveOperationId.value = null
+        }
+    }
+}

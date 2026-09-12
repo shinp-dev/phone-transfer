@@ -103,6 +103,7 @@ class FileTransferService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
+        TransferRuntimeBus.begin(currentOperation)
         startForegroundCompat(notification(kind, 0, 0, "転送を準備しています"))
 
         // Commit identity before another main-thread command can request cancellation.
@@ -114,6 +115,7 @@ class FileTransferService : Service() {
             }
         } catch (_: Exception) {
             TransferStatusBus.recoveryBlocked("LOCAL_JOURNAL_UNAVAILABLE")
+            TransferRuntimeBus.finish(currentOperation)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
             return START_NOT_STICKY
@@ -191,6 +193,7 @@ class FileTransferService : Service() {
                     stopSelf()
                 }
             }
+        transferJob?.invokeOnCompletion { TransferRuntimeBus.finish(currentOperation) }
         return START_NOT_STICKY
     }
 
@@ -625,6 +628,7 @@ class FileTransferService : Service() {
         }
         publishResumable(marked, "CANCEL_PENDING", canResume = false)
         operationId = target
+        TransferRuntimeBus.begin(target)
         transferJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 withContext(Dispatchers.IO) {
@@ -638,6 +642,7 @@ class FileTransferService : Service() {
                 stopSelf(startId)
             }
         }
+        transferJob?.invokeOnCompletion { TransferRuntimeBus.finish(target) }
     }
 
     private fun publishResumable(
@@ -798,12 +803,13 @@ class FileTransferService : Service() {
             deviceId: String,
             shareId: String,
             directory: String,
-            source: Uri
+            source: Uri,
+            operationId: String = UUID.randomUUID().toString()
         ) {
             val intent =
                 Intent(context, FileTransferService::class.java)
                     .setAction(ACTION_UPLOAD)
-                    .putExtra(EXTRA_OPERATION_ID, UUID.randomUUID().toString())
+                    .putExtra(EXTRA_OPERATION_ID, operationId)
                     .putExtra(EXTRA_DEVICE_ID, deviceId)
                     .putExtra(EXTRA_SHARE_ID, shareId)
                     .putExtra(EXTRA_REMOTE_PATH, directory)
