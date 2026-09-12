@@ -87,7 +87,7 @@ internal sealed class ServerWindow : Form
         layout.Controls.Add(new Label
         {
             AutoSize = true,
-            Text = "ファイル転送とAndroid→PCのテキスト/URL送信APIは有効です。\n閉じるとトレイで待機します。 App 0.1.0 / Build 1 / Protocol 1"
+            Text = "ファイル転送とAndroid→PCのテキスト/URL送信APIは有効です。\n閉じるとトレイで待機します。 App 0.1.1 / Build 2 / Protocol 1"
         }, 0, 10);
         Controls.Add(layout);
         Shown += async (_, _) =>
