@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated: 2026-09-09
+Updated: 2026-09-12
 
 Phone Transfer remains pre-MVP because full physical-device acceptance is not complete. The core path is substantially implemented: pairing, mDNS discovery, shared-folder configuration, Windows handle-safe filesystem, authenticated file transfer, Android SAF/Foreground Service ownership, Windows durable upload recovery, Android process-kill upload recovery, and Android → PC plain-text/URL sending are implemented in the current development line.
 
@@ -36,7 +36,9 @@ Windows can select, persist and clear one local NTFS/ReFS receive root. UNC path
 
 The authenticated file API includes share/listing, durable upload create/status/chunk/cancel/complete and stable-handle download with strong ETag/range support. Transfer ownership is bound to the authenticated paired device and permissions are checked per operation. Physical root paths and native exception details are not exposed over the wire.
 
-Android uses `ACTION_OPEN_DOCUMENT` and `CREATE_DOCUMENT`; content URIs remain capabilities and are never converted to filesystem paths. Long-running file I/O is owned by a non-exported `dataSync` Foreground Service.
+Android uses `ACTION_OPEN_DOCUMENT`, `ACTION_OPEN_DOCUMENT_ALLOW_MULTIPLE` through the Activity Result API, and `CREATE_DOCUMENT`; content URIs remain capabilities and are never converted to filesystem paths. Long-running file I/O is owned by a non-exported `dataSync` Foreground Service.
+
+The in-app upload picker accepts up to 100 unique files. A separate bounded app-private journal retains queue order, stable per-file operation IDs, the target PC/share/directory and individual terminal results. Persistable SAF read access is verified before a file is admitted. The queue feeds the existing Foreground Service one item at a time, pauses on resumable failures, continues after terminal per-file failures and durably cancels all waiting items before cancelling the active transfer.
 
 Physical testing found that a share-root upload correctly supplies an empty remote directory path, but transfer-intent admission originally rejected that value and misleadingly reported `LOCAL_JOURNAL_UNAVAILABLE`. Upload admission now permits only that intentional empty root path; other required extras and download paths remain non-empty. See [Android root-upload investigation](known-issues/android-root-upload-local-journal-unavailable.md).
 
@@ -115,6 +117,7 @@ This is the largest remaining MVP gate. Windows 11 + Android should be exercised
 - seekable and nonseekable/reopenable SAF providers;
 - providers that accept and reject persistable grants;
 - upload process kill before create, during upload and after server completion;
+- multi-file upload across completion, individual failure, whole-batch cancellation and process-kill boundaries;
 - Android app/process restart and device reboot;
 - Windows process restart / PC reboot;
 - Wi-Fi interruption/reconnect, screen-off and FGS timeout;

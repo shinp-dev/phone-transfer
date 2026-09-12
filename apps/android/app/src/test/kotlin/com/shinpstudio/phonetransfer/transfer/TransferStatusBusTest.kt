@@ -109,6 +109,16 @@ class TransferStatusBusTest {
         assertTrue(upload.canResume)
     }
 
+    @Test
+    fun runtimeDoesNotSettleUntilTheMatchingOperationFinishes() {
+        TransferRuntimeBus.begin(OPERATION_ID)
+        TransferRuntimeBus.finish(OTHER_OPERATION_ID)
+        assertEquals(OPERATION_ID, TransferRuntimeBus.activeOperationId.value)
+
+        TransferRuntimeBus.finish(OPERATION_ID)
+        assertEquals(null, TransferRuntimeBus.activeOperationId.value)
+    }
+
     companion object {
         private const val OPERATION_ID = "11111111-1111-1111-1111-111111111111"
         private const val OTHER_OPERATION_ID = "22222222-2222-2222-2222-222222222222"

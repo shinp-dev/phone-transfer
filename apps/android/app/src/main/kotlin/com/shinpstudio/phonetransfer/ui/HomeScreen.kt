@@ -41,8 +41,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             result.contents?.let { viewModel.pair(it) }
         }
     val uploadPicker =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            uri?.let(viewModel::upload)
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNotEmpty()) viewModel.upload(uris)
         }
     val downloadPicker =
         rememberLauncherForActivityResult(
@@ -57,7 +57,9 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         transfer is TransferServiceState.Running ||
             transfer is TransferServiceState.Resumable ||
             transfer is TransferServiceState.RecoveryBlocked
-    val interactive = !state.busy && !transferBlocking
+    val interactive = !state.busy &&
+        !transferBlocking &&
+        (state.uploadQueue?.remainingCount ?: 0) == 0
     val textInteractive = !state.busy && state.activePcId != null
 
     Column(
@@ -181,7 +183,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 enabled = interactive && share.writable,
                 onClick = { uploadPicker.launch(arrayOf("*/*")) }
             ) {
-                Text("このフォルダへファイルを送る")
+                Text("このフォルダへファイルを送る（複数選択可）")
             }
             if (!share.writable) {
                 Text("この端末にはアップロード権限がありません")
@@ -213,6 +215,36 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                         Text("スマホに保存")
                     }
                 }
+            }
+        }
+
+        state.uploadQueue?.let { queue ->
+            Text("送信キュー", style = MaterialTheme.typography.titleMedium)
+            val processed = queue.completedCount + queue.failures.size + queue.cancelledCount
+            Text("$processed / ${queue.totalCount}件を処理済み（成功 ${queue.completedCount}件）")
+            if (queue.remainingCount > 0) {
+                queue.currentName?.let { name ->
+                    Text("現在 ${queue.currentIndex} / ${queue.totalCount}: $name")
+                }
+                if (
+                    transfer !is TransferServiceState.Running &&
+                    transfer !is TransferServiceState.Resumable &&
+                    transfer !is TransferServiceState.RecoveryBlocked
+                ) {
+                    Button(onClick = viewModel::retryUploadQueue) {
+                        Text("送信キューを再開")
+                    }
+                    TextButton(onClick = viewModel::cancel) {
+                        Text("送信キューをすべて中止")
+                    }
+                }
+            } else if (queue.cancelRequested) {
+                Text("送信キューは中止されました")
+            } else {
+                Text("送信キューの処理が完了しました")
+            }
+            queue.failures.forEach { failure ->
+                Text("失敗: ${failure.displayName} (${failure.code})")
             }
         }
 

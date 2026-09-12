@@ -25,6 +25,7 @@ AndroidスマートフォンとWindows PCの間で、同一LAN内だけでファ
 - Windows uploadはprivate stagingへ書き込み、flush後にdurable journalのoffsetを進め、SHA-256検証後にsame-volume no-overwrite renameで完成。
 - Windows再起動後はSQLite journalとstaging identityをreconcileし、server側のtransfer stateを復旧。
 - Android uploadはlocal durable journal、stable idempotency key、SAF capability、source name/size/SHA-256、server transfer ID/offsetを保持し、process kill後にWindows stateをauthorityとして安全にreconcile。
+- Androidのファイル選択は最大100件の複数選択に対応し、永続キューから1件ずつ順次upload。個別失敗は記録して残りを継続し、キュー全体の中止もdurable化。
 - Android resume前は保存済みPC identity、実際のpersisted URI permission、source full hashを再検証。
 - serverが既にCompletedならAndroid sourceを再openせずcompletion receiptへ収束。
 - interrupted downloadはgeneric SAF destinationの安全な継続を保証できないため、process kill後の同一destination resumeを意図的に行わない。

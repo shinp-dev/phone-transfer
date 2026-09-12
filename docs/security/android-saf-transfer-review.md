@@ -24,7 +24,7 @@ Scope: `feature/android-saf-transfer` Android-only transport/SAF increment. Wind
 - v1 requires SHA-256 and total size before upload creation. The source URI is therefore opened twice. Seek is not required, but a provider that cannot reopen the same selected document is unsupported in this increment.
 - Android process kill is not restart-resume. The Foreground Service is process-local and Windows staging reconciliation is still deferred to durable recovery.
 - SAF providers do not offer a universal atomic rename/rollback primitive for an already-created destination URI. Hash mismatch and short reads fail visibly, but provider refusal to truncate can leave a partial local document.
-- Only one foreground transfer is owned by the Android service at a time. Queueing/ACTION_SEND/MULTIPLE are later UX work.
+- Only one foreground transfer is owned by the Android service at a time. The in-app picker may persist up to 100 uniquely identified sources and feeds them through a separate durable sequential queue. ACTION_SEND/MULTIPLE share-sheet integration remains later UX work.
 - Full download is used by the Android client in this increment. Windows range/ETag resume remains available for the future durable state machine.
 
 ## Required verification before merge

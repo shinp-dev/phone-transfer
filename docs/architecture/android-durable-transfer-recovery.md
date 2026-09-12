@@ -17,13 +17,19 @@ This increment implements user-driven upload recovery after Android process deat
 - Interrupted downloads are surfaced but **not resumed to the same destination URI** in this increment. Generic SAF providers do not give Phone Transfer a portable proof that reopening an existing document will truncate/rewrite it with the semantics needed for crash-safe restart-from-zero. The user must cancel the interrupted download and start a fresh download with a newly selected destination.
 - Recovery is user-driven when the app is reopened. It does not schedule unrestricted background resurrection after process death because Android foreground-service launch policy may forbid that in the background.
 
-ACTION_SEND/MULTIPLE, multi-transfer queue UX, text/history and unattended scheduler policy remain out of scope.
+ACTION_SEND/MULTIPLE share-sheet integration, text/history and unattended scheduler policy remain out of scope. The in-app picker supports a bounded durable multi-upload queue.
 
 ## Local durable operation journal
 
 Use one versioned, bounded document with a checked file-sync / atomic-rename / directory-sync commit in app-private storage, separate from paired-PC persistence.
 
-The current UI/foreground-service model owns at most one operation, so the journal limit is deliberately **one** operation: either pending or a completed receipt. The next explicit new transfer atomically replaces that receipt; there is no history or queue. Multiple records or an unknown/corrupt document fail closed rather than creating a queue semantics that the service does not implement.
+The foreground-service transfer journal still owns at most **one** operation: either pending or a completed receipt. The next queue item atomically replaces that receipt. Multiple transfer records or an unknown/corrupt document fail closed. A separate bounded `upload-queue.json` journal holds batch order and per-item terminal results; it never changes the one-active-transfer invariant.
+
+The upload queue contains at most 100 unique content URIs. Every item receives its final operation UUID before the queue is committed. The app obtains and verifies a persistable SAF read grant for every accepted item before acknowledging the batch; providers that cannot retain a grant are reported and excluded. Queue state moves monotonically from `queued` to `active` and then to `completed`, `failed`, or `cancelled`. At most one item is active.
+
+On startup, an active queue item is reconciled with the single-transfer journal by operation UUID. A matching pending operation follows the existing user-driven resume rules; a matching completion receipt advances without reopening the source; and an active item with no transfer record is safely submitted with its already-persisted UUID. Completion of the running service is observed before the next foreground-service request is issued, so terminal publication cannot race the old service job.
+
+Batch cancellation is persisted before cancelling the active transfer. Waiting items become terminally cancelled and their grants are released. If the active upload has already completed on Windows, the existing completion-wins rule still applies. A non-retryable per-item failure is retained and the next item starts; retryable/resumable failures pause the queue for explicit user action.
 
 A record contains:
 
@@ -124,7 +130,7 @@ This is an availability limitation, not a false-success path: Phone Transfer doe
 
 ## Concurrency and bounds
 
-The foreground service owns at most one active transfer and the durable journal holds at most one pending operation. This matches the current UI and notification/cancel model and avoids pretending that a multi-transfer queue exists.
+The foreground service owns at most one active transfer and the transfer journal holds at most one pending operation. The separate bounded upload queue serializes work into that service; it does not introduce parallel transfers. The notification and cancel action therefore continue to refer to exactly one active file, while the Compose UI reports batch-level counts and failures.
 
 No long hash/network/content-provider operation is performed while holding the journal synchronization monitor. Checked atomic commits contain only the bounded JSON document. Provider capability checks are outside the journal monitor. Initial operation identity is committed before the service accepts a subsequent cancel command; the coroutine cancellation handler is entered before dispatch to IO.
 
@@ -174,6 +180,10 @@ At minimum automate:
 - committed offset/server identity/source identity cannot regress or change;
 - repeated restart/reconciliation is stable;
 - interrupted download is explicitly non-resumable in this increment.
+- bounded upload-queue encode/decode, unique sources and one-active-item validation;
+- queue restart at queued, active, completed and failed boundaries;
+- durable whole-batch cancellation and per-item failure continuation;
+- no next foreground-service admission before the prior service job settles.
 
 CI must keep protocol generation, Windows tests, Android formatting/unit/lint/assemble green. OpenAPI should not change unless the existing transfer status contract proves insufficient.
 
